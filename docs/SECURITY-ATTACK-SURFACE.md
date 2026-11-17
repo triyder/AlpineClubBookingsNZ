@@ -378,7 +378,15 @@ These family rules are enforced by automated tests (issue #1132):
     refuses on the preview and the save alike, decided on the figures under
     its locks. It applies only the figures the
     officer was shown, settlement method included, and answers 404 while the
-    Work Parties module is off.
+    Work Parties module is off. Fork #130: `action: "remove"` takes the
+    booking off the work party it carries through the same service argument
+    and edit; the price rises and the difference is owed on the booking. A
+    removal carries no settlement method (400 if sent) and refuses, 409, any
+    money it would hand back. Its checked figures include an increase invoiced
+    to the group organiser, so a stale preview cannot save it. Fork #127: on a started stay the argument also
+    asks the edit policy to price the whole stay (an officer-only mode no body
+    can reach), so the promotion re-runs over nights already slept; every
+    other in-progress edit still refuses a promo change.
 
 Admin route subfamilies are:
 

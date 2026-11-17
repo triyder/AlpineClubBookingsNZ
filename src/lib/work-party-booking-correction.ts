@@ -26,7 +26,10 @@
  *    back, refused when the change would refund or credit money to the officer
  *    or their family, which another officer must then do;
  *  - a dry run for the confirm dialog and a figures check on the save, so the
- *    officer is charged-or-credited exactly what they were shown (#4030 C4).
+ *    officer is charged-or-credited exactly what they were shown (#4030 C4);
+ *  - a started stay (#127) priced whole (`INV-MOD-063`), so every night in the
+ *    window is discounted, slept or not; and Remove (#130), the same edit with
+ *    the code taken off, its increase owed on the booking.
  *
  * LOCKS (`INV-LOCK-001`/`-002`), the order #4533's executor and every booking
  * money writer use: global `pg_advisory_xact_lock(1)` — this edit moves
@@ -53,7 +56,7 @@ import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
 import { bookingOwner } from "@/lib/booking-owner";
 import {
   activeLifecycleEditRefusal,
-  bookingStayHasStarted,
+  isFinishedStay,
 } from "@/lib/booking-edit-policy";
 import { isQuotePricedBooking } from "@/lib/booking-modify-quote-priced";
 import type { BookingModificationSettlementMethod } from "@/lib/booking-modify";
@@ -64,7 +67,7 @@ import {
   type BatchModificationPreTransaction,
 } from "@/lib/booking-batch-modification-service";
 import { workPartyEventRefusal } from "@/lib/work-party";
-import { editMoneyBackCents } from "@/lib/edit-money-back";
+import { editTotalMoneyBackCents } from "@/lib/edit-money-back";
 
 export type WorkPartyBookingEligibility =
   | { ok: true }
@@ -106,43 +109,49 @@ export interface WorkPartyEligibilityEvent {
 }
 
 /**
+ * The refusals Add and Remove share: the edit doors' own editable-status answer
+ * (`activeLifecycleEditRefusal`, #3245) and a finished stay. A stay that has
+ * started is allowed (#127, owner 16 Nov 2026): every night inside the work
+ * party's window is repriced, slept or not (`getBookingEditPolicy`'s
+ * "work-party-correction" mode).
+ */
+function workPartyStayRefusal(
+  booking: { status: string; checkOut: Date; quotePriced: boolean },
+  today: Date,
+): string | null {
+  if (activeLifecycleEditRefusal(booking.status, "ADMIN") !== null) {
+    return "This booking can't be changed in its current status (only a pending, confirmed or paid booking can).";
+  }
+  if (isFinishedStay(booking, today)) {
+    return "This stay has finished, so its work party can't be changed here.";
+  }
+  if (booking.quotePriced) {
+    return "This booking is priced by its quote, so its work party discount can't be changed.";
+  }
+  return null;
+}
+
+/**
  * Whether this booking may be added to this work party — the ONE rule the GET
  * list, the service (again, under the locks) and so the dialog all use. Each
  * refusal is one the canonical edit would make anyway, stated up front in an
- * officer's words rather than discovered at the preview, plus the owner's
- * started-stay refusal (#119 decision 3). An organiser-paid joiner is allowed
+ * officer's words rather than discovered at the preview. A started stay is
+ * allowed (#127); a finished one is not. An organiser-paid joiner is allowed
  * (#129 decision 5); an officer's own or family's booking is refused only once
  * the figures show money coming back (`workPartyOwnMoneyBackRefusal`). The
- * editable-status answer is the edit doors' own (`activeLifecycleEditRefusal`,
- * #3245) and the event answer is `workPartyEventRefusal`; neither is copied.
+ * event answer is `workPartyEventRefusal`; it is not copied.
  */
 export function workPartyBookingEligibility(
   booking: WorkPartyEligibilityBooking,
   context: WorkPartyEligibilityContext,
   event: WorkPartyEligibilityEvent,
 ): WorkPartyBookingEligibility {
-  if (activeLifecycleEditRefusal(booking.status, "ADMIN") !== null) {
-    return {
-      ok: false,
-      reason: "This booking can't be changed in its current status (only a pending, confirmed or paid booking can).",
-    };
-  }
-  if (bookingStayHasStarted(booking.checkIn, context.today)) {
-    return {
-      ok: false,
-      reason: "This stay has already started, so its prices are fixed and a work party can't be added.",
-    };
-  }
+  const stayRefusal = workPartyStayRefusal(booking, context.today);
+  if (stayRefusal) return { ok: false, reason: stayRefusal };
   if (!booking.memberOwned) {
     return {
       ok: false,
       reason: "This booking belongs to an organisation, which has no account credit to return the discount to.",
-    };
-  }
-  if (booking.quotePriced) {
-    return {
-      ok: false,
-      reason: "This booking is priced by its quote, so a work party discount can't be added.",
     };
   }
   if (booking.hasWorkParty) {
@@ -166,6 +175,36 @@ export function workPartyBookingEligibility(
     case null:
       return { ok: true };
   }
+}
+
+/** What "Remove from work party" (#130) reads about the booking. */
+export interface WorkPartyRemovalEligibilityBooking {
+  status: string;
+  checkOut: Date;
+  quotePriced: boolean;
+  /** The work party whose internal promo is on the booking, or null. */
+  workPartyEventId: string | null;
+}
+
+export const WORK_PARTY_NOT_ON_BOOKING_MESSAGE = "This booking is not on that work party.";
+
+/**
+ * Whether this booking may be taken off this work party (#130): the stay
+ * rules Add has, and the booking must carry exactly this work party. The
+ * event's own state does not matter: an inactive work party can still be
+ * removed from a booking it was added to by mistake.
+ */
+export function workPartyRemovalEligibility(
+  booking: WorkPartyRemovalEligibilityBooking,
+  context: Pick<WorkPartyEligibilityContext, "today">,
+  workPartyEventId: string,
+): WorkPartyBookingEligibility {
+  const stayRefusal = workPartyStayRefusal(booking, context.today);
+  if (stayRefusal) return { ok: false, reason: stayRefusal };
+  if (booking.workPartyEventId !== workPartyEventId) {
+    return { ok: false, reason: WORK_PARTY_NOT_ON_BOOKING_MESSAGE };
+  }
+  return { ok: true };
 }
 
 /**
@@ -264,7 +303,7 @@ export interface WorkPartyCorrectionFigures {
   previousFinalPriceCents: number;
   /** The booking's price after (integer cents). */
   newFinalPriceCents: number;
-  /** The change in price: negative. */
+  /** The change in price: negative on an Add, positive on a Remove. */
   priceDiffCents: number;
   /** Paid money returned as account credit. */
   accountCreditAmountCents: number;
@@ -278,21 +317,18 @@ export interface WorkPartyCorrectionFigures {
   refundedExcessCreditCents: number;
   /** Still to pay after the change (an unpaid ask's remainder), or 0. */
   additionalAmountCents: number;
+  /** A Remove's increase invoiced to the group organiser, not this member (#4299), or 0. */
+  billedToOrganiserCents: number;
   /**
    * Paid money refunded: to the member's card when the officer chose `card`,
    * or to the group organiser for an organiser-paid joiner; otherwise 0.
    */
   refundAmountCents: number;
-  /** The method the change settles by (`resolveWorkPartySettlementMethod`). */
-  settlementMethod: BookingModificationSettlementMethod;
-}
-
-/**
- * Every cent the change hands back: the settlement's (`editMoneyBackCents`)
- * plus an unpaid booking's applied credit freed by the lower price.
- */
-export function workPartyMoneyBackCents(figures: WorkPartyCorrectionFigures): number {
-  return editMoneyBackCents(figures) + figures.refundedExcessCreditCents;
+  /**
+   * The method the change settles by (`resolveWorkPartySettlementMethod`);
+   * null on a Remove, which hands nothing back.
+   */
+  settlementMethod: BookingModificationSettlementMethod | null;
 }
 
 export const WORK_PARTY_OWN_MONEY_BACK_MESSAGE =
@@ -302,7 +338,7 @@ export const WORK_PARTY_OWN_MONEY_BACK_MESSAGE =
  * #129 decision 6 (owner, 16 Nov 2026): an officer may add their own or their
  * family's booking while nothing comes back (an unpaid booking with no account
  * credit applied: its price just drops); once the change would refund or
- * credit any money (`workPartyMoneyBackCents`), another officer
+ * credit any money (`editTotalMoneyBackCents`), another officer
  * must. The money's recipient is the booking's owner, or for an organiser-paid
  * joiner the group organiser (the lane's reading, recorded on the issue).
  */
@@ -310,7 +346,7 @@ export function workPartyOwnMoneyBackRefusal(
   figures: WorkPartyCorrectionFigures,
   recipientIsActorOrFamily: boolean,
 ): string | null {
-  return recipientIsActorOrFamily && workPartyMoneyBackCents(figures) > 0
+  return recipientIsActorOrFamily && editTotalMoneyBackCents(figures) > 0
     ? WORK_PARTY_OWN_MONEY_BACK_MESSAGE
     : null;
 }
@@ -367,31 +403,57 @@ const FIGURE_KEYS = [
   "appliedCreditGivenBackCents",
   "refundedExcessCreditCents",
   "additionalAmountCents",
+  "billedToOrganiserCents",
   "refundAmountCents",
   "settlementMethod",
 ] as const satisfies ReadonlyArray<keyof WorkPartyCorrectionFigures>;
 
-export async function addBookingToWorkParty(
-  params: {
-    bookingId: string;
-    workPartyEventId: string;
-    actorMemberId: string;
-    /** Absent means notify, as every officer edit does by default. */
-    notifyMember?: boolean;
+/** What both directions take. */
+export type WorkPartyCorrectionParams = {
+  bookingId: string;
+  workPartyEventId: string;
+  actorMemberId: string;
+  /** Absent means notify, as every officer edit does by default. */
+  notifyMember?: boolean;
+  ipAddress: string;
+  /** The club's day, resolved before the transaction (`INV-LOCK-004`). */
+  todayAtClub: CalendarDate;
+  /** The club's format, resolved before the transaction (#3565). */
+  format: ClubFormat;
+  /** `prepareBatchModificationForCallerTransaction({ audience: "admin" })`. */
+  preTransaction: BatchModificationPreTransaction;
+} & WorkPartyCorrectionMode;
+
+export function addBookingToWorkParty(
+  params: WorkPartyCorrectionParams & {
     /**
      * The officer's choice (#129 decision 1); absent means the default — club
      * credit, or the organiser's disposition. `card` is refused (409) unless
      * `workPartySettlementOptions` offers it.
      */
     settlementMethod?: BookingModificationSettlementMethod;
-    ipAddress: string;
-    /** The club's day, resolved before the transaction (`INV-LOCK-004`). */
-    todayAtClub: CalendarDate;
-    /** The club's format, resolved before the transaction (#3565). */
-    format: ClubFormat;
-    /** `prepareBatchModificationForCallerTransaction({ audience: "admin" })`. */
-    preTransaction: BatchModificationPreTransaction;
-  } & WorkPartyCorrectionMode,
+  },
+): Promise<WorkPartyCorrectionResult> {
+  return correctWorkParty("add", params);
+}
+
+/**
+ * #130 (owner, 16 Nov 2026): Add with the work party's code left out. The
+ * difference is owed like any price rise (paid: the ordinary additional ask,
+ * `INV-ADDPAY`); credit given and refunds paid are left alone.
+ */
+export function removeBookingFromWorkParty(
+  params: WorkPartyCorrectionParams,
+): Promise<WorkPartyCorrectionResult> {
+  return correctWorkParty("remove", params);
+}
+
+export const WORK_PARTY_REMOVAL_MONEY_BACK_MESSAGE =
+  "Removing the work party would hand money back, so it can't be done here.";
+
+async function correctWorkParty(
+  direction: "add" | "remove",
+  params: WorkPartyCorrectionParams & { settlementMethod?: BookingModificationSettlementMethod },
 ): Promise<WorkPartyCorrectionResult> {
   let deferredPostCommit: (() => Promise<void>) | null = null;
 
@@ -458,60 +520,55 @@ export async function addBookingToWorkParty(
 
       const redemptions = bookingPromoRedemptions(booking);
       const ownerMemberId = bookingOwner(booking).memberId;
-      const eligibility = workPartyBookingEligibility(
-        {
-          status: booking.status,
-          checkIn: booking.checkIn,
-          checkOut: booking.checkOut,
-          hasWorkParty: redemptions.some((row) => row.promoCode?.workPartyEvent),
-          hasOtherPromoCode: redemptions.some((row) => row.promoCode && !row.promoCode.workPartyEvent),
-          quotePriced: await isQuotePricedBooking(tx, params.bookingId),
-          memberOwned: Boolean(ownerMemberId),
-        },
-        {
-          bookingLodgeId,
-          today: dateOnlyInstantOf(params.todayAtClub),
-          multiPromoCodes: await multiPromoCodesEnabled(tx),
-        },
-        event,
-      );
+      const quotePriced = await isQuotePricedBooking(tx, params.bookingId);
+      const today = dateOnlyInstantOf(params.todayAtClub);
+      const eligibility =
+        direction === "add"
+          ? workPartyBookingEligibility(
+              {
+                status: booking.status,
+                checkIn: booking.checkIn,
+                checkOut: booking.checkOut,
+                hasWorkParty: redemptions.some((row) => row.promoCode?.workPartyEvent),
+                hasOtherPromoCode: redemptions.some((row) => row.promoCode && !row.promoCode.workPartyEvent),
+                quotePriced,
+                memberOwned: Boolean(ownerMemberId),
+              },
+              { bookingLodgeId, today, multiPromoCodes: await multiPromoCodesEnabled(tx) },
+              event,
+            )
+          : workPartyRemovalEligibility(
+              {
+                status: booking.status,
+                checkOut: booking.checkOut,
+                quotePriced,
+                workPartyEventId:
+                  redemptions.find((row) => row.promoCode?.workPartyEvent)?.promoCode?.workPartyEvent?.id ?? null,
+              },
+              { today },
+              params.workPartyEventId,
+            );
       if (!eligibility.ok) throw new ApiError(eligibility.reason, 409);
 
-      // (4) The canonical edit, on THIS transaction: the booking's codes in
+      // (4) The canonical edit, on THIS transaction. Add: the booking's codes in
       // their order, then the work party's (the promotion engine applies an
-      // internal code first regardless). Its refusals throw and roll back.
-      // The settlement is the officer's choice among those offered (#129); a
-      // refund it picks is the pipeline's own ordinary settlement.
+      // internal code first regardless). Remove (#130): the booking's codes
+      // without the work party's. Its refusals throw and roll back. An Add's
+      // settlement is the officer's choice among those offered (#129); a
+      // refund it picks is the pipeline's own ordinary settlement. A Remove
+      // hands nothing back, so it carries no settlement method.
       const settlementOptions = workPartySettlementOptions(booking);
-      const settlementMethod = resolveWorkPartySettlementMethod(
-        settlementOptions,
-        params.settlementMethod,
-      );
-      // Who any money back goes to (#129 decision 6), and whether that is the
-      // officer or their family: fresh family rows, under the locks. For an
-      // organiser-paid joiner it is the group organiser, the parent's owner.
-      const recipientMemberId = settlementOptions.paidByOrganiser && booking.parentBookingId
-        ? bookingOwner(
-            await tx.booking.findUniqueOrThrow({
-              where: { id: booking.parentBookingId },
-              select: { memberId: true },
-            }),
-          ).memberId
-        : ownerMemberId;
-      const recipientIsActorOrFamily = await actorIsMemberOrFamily(
-        tx,
-        recipientMemberId,
-        params.actorMemberId,
+      const settlementMethod =
+        direction === "add" ? resolveWorkPartySettlementMethod(settlementOptions, params.settlementMethod) : null;
+      const keptCodes = redemptions.flatMap((row) =>
+        row.promoCode && row.promoCode.code !== event.promoCode.code ? [{ code: row.promoCode.code }] : [],
       );
       const modified = await modifyBookingBatch({
         bookingId: params.bookingId,
         actor: { id: params.actorMemberId, role: "ADMIN" },
         input: {
-          promoCodes: [
-            ...redemptions.flatMap((row) => (row.promoCode ? [{ code: row.promoCode.code }] : [])),
-            { code: event.promoCode.code },
-          ],
-          settlementMethod,
+          promoCodes: direction === "add" ? [...keptCodes, { code: event.promoCode.code }] : keptCodes,
+          ...(settlementMethod === null ? {} : { settlementMethod }),
           ...(params.notifyMember === undefined ? {} : { notifyMember: params.notifyMember }),
         },
         ipAddress: params.ipAddress,
@@ -522,25 +579,33 @@ export async function addBookingToWorkParty(
         officerWorkPartyCorrection: {
           workPartyEventId: params.workPartyEventId,
           promoCodeId: event.promoCode.id,
+          direction,
         },
       });
 
-      // (5) The discount must actually have landed, and can only lower the
-      // price. An in-progress stay keeps its agreed prices and runs no promo,
-      // which is a refusal here rather than a silent no-op.
-      const applied = await tx.promoRedemption.findFirst({
+      // (5) The change must actually have happened, in its one direction. A
+      // stay that has finished, or any path that ran no promotion, refuses
+      // here rather than saving a silent no-op.
+      const onBooking = await tx.promoRedemption.findFirst({
         where: { bookingId: params.bookingId, promoCodeId: event.promoCode.id },
         select: { id: true },
       });
-      if (!applied || modified.promoChangeNotApplied) {
+      if (modified.promoChangeNotApplied || Boolean(onBooking) !== (direction === "add")) {
         throw new ApiError(
           modified.promoChangeNotApplied?.message ??
-            "The work party discount could not be applied to this booking.",
+            (direction === "add"
+              ? "The work party discount could not be applied to this booking."
+              : "The work party discount could not be removed from this booking."),
           409,
         );
       }
-      if (modified.priceDiffCents > 0) {
-        throw new ApiError("Adding the work party would raise this booking's price.", 409);
+      if (direction === "add" ? modified.priceDiffCents > 0 : modified.priceDiffCents < 0) {
+        throw new ApiError(
+          direction === "add"
+            ? "Adding the work party would raise this booking's price."
+            : "Removing the work party would lower this booking's price.",
+          409,
+        );
       }
 
       const figures: WorkPartyCorrectionFigures = {
@@ -551,20 +616,44 @@ export async function addBookingToWorkParty(
         appliedCreditGivenBackCents: modified.appliedCreditGivenBackCents,
         refundedExcessCreditCents: modified.refundedExcessCreditCents,
         additionalAmountCents: modified.additionalAmountCents,
+        billedToOrganiserCents: modified.billedToOrganiserCents,
         refundAmountCents: modified.refundAmountCents,
         settlementMethod,
       };
-      // #129: a refund only where it was meant — the officer chose the card
-      // (`resolveWorkPartySettlementMethod` admits `card` only where offered),
-      // or the organiser's money goes back to them. Any other refund is a path
-      // the options missed; refuse rather than pay it.
-      const refundExpected = settlementOptions.paidByOrganiser || settlementMethod === "card";
-      if (figures.refundAmountCents > 0 && !refundExpected) {
-        throw new ApiError("This booking's change would be refunded, not credited, so it can't be added here.", 409);
+      if (direction === "remove") {
+        // #130: the money goes one way. Anything handed back is a path the
+        // plan missed; refuse rather than pay it. So the own/family rule (#129
+        // decision 6), which guards money coming back, has nothing to refuse.
+        if (editTotalMoneyBackCents(figures) > 0) {
+          throw new ApiError(WORK_PARTY_REMOVAL_MONEY_BACK_MESSAGE, 409);
+        }
+      } else {
+        // #129: a refund only where it was meant — the officer chose the card
+        // (`resolveWorkPartySettlementMethod` admits `card` only where offered),
+        // or the organiser's money goes back to them. Any other refund is a path
+        // the options missed; refuse rather than pay it.
+        const refundExpected = settlementOptions.paidByOrganiser || settlementMethod === "card";
+        if (figures.refundAmountCents > 0 && !refundExpected) {
+          throw new ApiError("This booking's change would be refunded, not credited, so it can't be added here.", 409);
+        }
+        // #129 decision 6, decided on the figures so the preview refuses too:
+        // who any money back goes to — the owner, or for an organiser-paid
+        // joiner the group organiser — and whether that is the officer or their
+        // family, from fresh family rows under the locks.
+        const recipientMemberId = settlementOptions.paidByOrganiser && booking.parentBookingId
+          ? bookingOwner(
+              await tx.booking.findUniqueOrThrow({
+                where: { id: booking.parentBookingId },
+                select: { memberId: true },
+              }),
+            ).memberId
+          : ownerMemberId;
+        const ownMoneyBack = workPartyOwnMoneyBackRefusal(
+          figures,
+          await actorIsMemberOrFamily(tx, recipientMemberId, params.actorMemberId),
+        );
+        if (ownMoneyBack) throw new ApiError(ownMoneyBack, 409);
       }
-      // #129 decision 6: decided on the figures, so the preview refuses too.
-      const ownMoneyBack = workPartyOwnMoneyBackRefusal(figures, recipientIsActorOrFamily);
-      if (ownMoneyBack) throw new ApiError(ownMoneyBack, 409);
       if (params.dryRun) throw new WorkPartyCorrectionDryRun(figures, settlementOptions);
 
       // (6) Only what the officer was shown (#4030 C4). A throw rolls it all back.
@@ -598,8 +687,8 @@ export async function addBookingToWorkParty(
       await (deferredPostCommit as () => Promise<void>)();
     } catch (error) {
       logger.error(
-        { err: error, bookingId: params.bookingId },
-        "Booking added to a work party, but post-commit follow-up work failed",
+        { err: error, bookingId: params.bookingId, direction },
+        "Booking work party changed, but post-commit follow-up work failed",
       );
       return { ...result, followUpFailed: true };
     }

@@ -1,3 +1,5 @@
+import { isCapacityHoldingBookingStatus } from "@/lib/booking-status";
+
 /**
  * Fork #119: the batch service's work-party correction argument — its type,
  * the money rule recorded with it, and the guard that keeps it on its one
@@ -7,7 +9,7 @@
  * `work-party-booking-correction.test.ts`.
  *
  * What the argument names: the work party an officer is adding the booking
- * to, and its internal promo, for a work party the member was entitled to and
+ * to (or, #130, removing it from), and its internal promo, for a work party the member was entitled to and
  * missed ("Add booking to work party"). A SERVICE argument, like
  * `waiveChangeFee` and for the same reason: `input` is a parsed request body
  * on the member routes.
@@ -22,12 +24,14 @@
 export type OfficerWorkPartyCorrection = {
   readonly workPartyEventId: string;
   readonly promoCodeId: string;
+  /** Fork #130: "remove" drops the code instead, and the difference is owed. */
+  readonly direction: "add" | "remove";
 };
 
-/** The money rule a work-party correction carries, recorded with it. */
+/** The money rule a work-party correction carries, recorded with it: an Add's, or (fork #130) a Remove's. */
 const OFFICER_WORK_PARTY_MONEY_RULE = {
-  changeFee: "none",
-  reduction: "returned in full",
+  add: { changeFee: "none", reduction: "returned in full" },
+  remove: { changeFee: "none", increase: "owed on the booking" },
 } as const;
 
 /** The only request fields a work-party correction may carry. */
@@ -63,5 +67,33 @@ export function assertOfficerWorkPartyCorrectionCall(call: {
  * fee.
  */
 export function workPartyCorrectionRecord(correction: OfficerWorkPartyCorrection) {
-  return { ...correction, ...OFFICER_WORK_PARTY_MONEY_RULE };
+  return { ...correction, ...OFFICER_WORK_PARTY_MONEY_RULE[correction.direction] };
+}
+
+/**
+ * Fork #127: the day a correction's codes are judged on. On a started stay it
+ * is the check-in day, as a finished stay's are (#3750) — on the real today an
+ * expired second code would be released and its discount billed back.
+ */
+export function workPartyCorrectionCodeDay<T extends string>(
+  correction: OfficerWorkPartyCorrection | null | undefined,
+  checkInDay: T,
+  today: T,
+): T {
+  return correction && checkInDay < today ? checkInDay : today;
+}
+
+/**
+ * Fork #127/#130: whether the pricing pass may skip the bed check. A
+ * correction moves no guest or night, so a booking whose status already holds
+ * its beds claims none (a started stay's slept nights, or an officer's
+ * overbooking, would otherwise fail it). A booking that holds none yet, such
+ * as PAYMENT_PENDING, can become PAID through the $0 auto-pay, so it takes the
+ * check like any edit.
+ */
+export function workPartyCorrectionSkipsBedCheck(
+  correction: OfficerWorkPartyCorrection | null | undefined,
+  status: string,
+): boolean {
+  return Boolean(correction) && isCapacityHoldingBookingStatus(status);
 }

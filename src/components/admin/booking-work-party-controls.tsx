@@ -26,8 +26,10 @@ import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useClubFormat } from "@/components/club-format-provider";
 import { formatCents } from "@/lib/pricing";
+import { editTotalMoneyBackCents } from "@/lib/edit-money-back";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
 import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
+import { BookingWorkPartyRemoveControls } from "@/components/admin/booking-work-party-remove-controls";
 import type { BookingModificationSettlementMethod } from "@/lib/booking-modify-validation";
 import type {
   WorkPartyCorrectionFigures,
@@ -54,15 +56,34 @@ type WorkPartyOption = {
  * choice re-runs the dry run. An organiser-paid joiner's money goes back to
  * the organiser. The figures shown are the figures saved — the route refuses
  * if they, or the choice, moved.
- * Bookings edit; a bookings-view admin sees the button disabled.
+ * Bookings edit; a bookings-view admin sees the button disabled. A booking
+ * already on a work party is offered "Remove from work party" instead (#130).
  */
 export function BookingWorkPartyControls({
   bookingId,
   noEmails = false,
+  currentWorkParty = null,
 }: {
   bookingId: string;
   /** The booking's "No emails" switch: when on, the member is not emailed. */
   noEmails?: boolean;
+  /** The work party the booking is on, or null. */
+  currentWorkParty?: { id: string; name: string } | null;
+}) {
+  if (currentWorkParty) {
+    return (
+      <BookingWorkPartyRemoveControls bookingId={bookingId} workParty={currentWorkParty} noEmails={noEmails} />
+    );
+  }
+  return <BookingWorkPartyAddControls bookingId={bookingId} noEmails={noEmails} />;
+}
+
+function BookingWorkPartyAddControls({
+  bookingId,
+  noEmails,
+}: {
+  bookingId: string;
+  noEmails: boolean;
 }) {
   const canEdit = useAdminAreaEditAccess("bookings");
   const format = useClubFormat();
@@ -384,10 +405,9 @@ function WorkPartyMoneyBackLines({
   options: WorkPartySettlementOptions | null;
   money: (cents: number) => string;
 }) {
-  // Every cent coming back as credit: paid money credited, a paid booking's
-  // applied credit given back, and an unpaid one's applied credit freed (#129).
-  const creditBackCents =
-    figures.accountCreditAmountCents + figures.appliedCreditGivenBackCents + figures.refundedExcessCreditCents;
+  // Every cent coming back as credit: all the money back (the one sum,
+  // `editTotalMoneyBackCents`) less what is refunded to the card (#129, #132).
+  const creditBackCents = editTotalMoneyBackCents(figures) - figures.refundAmountCents;
   return (
     <>
       <p>
