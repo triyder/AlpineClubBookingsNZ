@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -55,7 +56,7 @@ export function BookingWorkPartyRemoveControls({
     setBusy(true);
     setError("");
     try {
-      const res = await fetch(`/api/admin/bookings/${bookingId}/work-party`, {
+      const res = await fetchWithRecentAuth(`/api/admin/bookings/${bookingId}/work-party`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(

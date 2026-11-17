@@ -174,7 +174,6 @@ export async function POST(
     clubFormatValues(),
     prepareBatchModificationForCallerTransaction({ audience: "admin" }),
   ]);
-  const correct = parsed.data.action === "remove" ? removeBookingFromWorkParty : addBookingToWorkParty;
   const common = {
     bookingId: id,
     workPartyEventId: parsed.data.workPartyEventId,
@@ -189,17 +188,22 @@ export async function POST(
   };
 
   try {
-    const result =
+    const mode =
       parsed.data.mode === "preview"
-        ? await correct({ ...common, dryRun: true })
-        : await correct({
-            ...common,
-            dryRun: false,
+        ? ({ dryRun: true } as const)
+        : {
+            dryRun: false as const,
             expectedFigures: parsed.data.expectedFigures,
             ...(parsed.data.notifyMember === undefined
               ? {}
               : { notifyMember: parsed.data.notifyMember }),
-          });
+          };
+    // Two direct calls, not a chosen function: the step-up census (#4619)
+    // follows each to the refund and ask operations the edit reaches.
+    const result =
+      parsed.data.action === "remove"
+        ? await removeBookingFromWorkParty({ ...common, ...mode })
+        : await addBookingToWorkParty({ ...common, ...mode });
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof WorkPartyCorrectionFiguresChangedError) {
