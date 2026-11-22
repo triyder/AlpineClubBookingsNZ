@@ -1930,7 +1930,7 @@ action; scoped admins cannot merge.
 | `APP_RUNTIME_ROLE`                 | Runtime label used by health/status reporting, usually set by Compose (`web-blue`, `web-green`, `cron-leader`, `staging`). Names which container **slot** this is. **Never read to decide whether this installation is production** — that is `APP_ENVIRONMENT_ROLE` above (`INV-CONFIG-003`). |
 | `NODE_ENV`                         | Runtime mode set by Node/Next.                                                                       |
 | `NEXT_RUNTIME`                     | Runtime marker set by Next.js instrumentation.                                                       |
-| `APP_VERSION`                      | **Not a runtime variable; do not set it (#4985).** The app's version is stamped at build time from `package.json` by `next.config.ts`, so changing it means building a new image. Health checks, **System Health**, config-transfer exports, support-evidence packs and server Sentry events all report it. It replaces the version variable npm and pnpm set only when they launch a script, which the production image (`node server.js`) never had, so health checks and server Sentry events reported "0.1.0" and exports and evidence packs reported "unknown". |
+| `APP_VERSION`                      | **Not a runtime variable; do not set it (#4985).** The app's version is stamped at build time from `package.json` by `next.config.ts`, so changing it means building a new image. Health checks, **System Health**, config-transfer exports, support-evidence packs and Sentry events from the server and members' browsers (#5262) all report it, as the Sentry `release`; the edge layer's Sentry setting carries it too and takes effect once an edge route exists (none runs on the edge today). The version is stamped at build time rather than sent at runtime (owner decision of 22 Nov 2026 on #5262), because a browser tab should report the code it is actually running. The version is public, so stamping it into the browser bundle exposes nothing secret; only the browser's Sentry DSN is read at runtime (#4982), so one image reports the same version wherever it runs. Tagging only: browser Sentry's session tracking (`BrowserSession`) is switched off, so a release adds no per-page-load session report. It replaces the version variable npm and pnpm set only when they launch a script, which the production image (`node server.js`) never had, so health checks and server Sentry events reported "0.1.0" and exports and evidence packs reported "unknown". |
 
 ## Environment Role
 
@@ -2599,6 +2599,22 @@ its list of processors. Suggested wording:
 > store the text of your question. Please don't include personal or sensitive
 > details in AI help questions."_
 
+## AI app connections
+
+> See the [AI app connections guide](docs/guides/mcp-server.md) for what the
+> `mcpServer` module does, its settings and its risks.
+
+The feature has no secret or setting of its own in the environment: who may
+connect, the most a connection may do and the approved AI apps are edited at
+**Admin → Help & system → AI app connections** and stored in `McpSettings`.
+It reads three existing variables:
+
+| Variable | How AI app connections use it |
+| --- | --- |
+| `NEXTAUTH_URL` | The connector address members give their AI app (`<origin>/api/mcp`), the OAuth issuer and every discovery URL. It must be the public origin. |
+| `AUTH_SECRET` / `NEXTAUTH_SECRET` | Derives, under its own label, the key that signs the internal `x-mcp-principal` header. Rotating it only invalidates headers in flight (they last 30 seconds); connections survive. |
+| `PORT` | The port each action is sent to on `127.0.0.1` (`src/lib/mcp/loopback.ts`); 3000 when unset or invalid. The Docker image sets `PORT=3000` and `HOSTNAME="0.0.0.0"`. A server that does not listen on loopback, or on that port, cannot run any action. |
+
 ## Operational Xero
 
 **Xero credentials are DB-only (#2079).** The Xero OAuth client id/secret, the
@@ -2647,32 +2663,40 @@ Existing env-configured deployments upgrading past #2079 must re-enter Xero
 credentials in-app and reconnect Xero — see the **upgrade runbook** in
 `DEPLOYMENT.md`.
 
-## GST treatment (member-money ledger)
+## GST treatment (member-money ledger and Xero)
 
 The club's GST treatment is a database setting, `ClubTaxSettings`
-(`INV-CONFIG-007`, #4626). It records three things: whether the club is
-GST-registered, the rate in basis points (1500 is 15%), and the club date it
-applies from. There is no environment variable and, for now, no screen.
+(`INV-CONFIG-007`, #4626/#4632). It is a schedule of dated periods, each
+recording whether the club is GST-registered, the rate in basis points (1500
+is 15%), the Xero tax type its revenue carries, and the club date it applies
+from. There is no environment variable.
 
-- **Default.** With no row, the club is GST-registered at 15% from 1 October
-  2010, with GST included in every price. That is the treatment the Xero
-  invoices already show (the inclusive `OUTPUT2` code), so a deployment that
-  never sets it records charges exactly as it invoices them.
-- **Who reads it.** Only the member-money ledger, which splits tax out of each
-  charge in whole cents. Xero does not read it yet: its documents still
-  hard-code the inclusive 15% code until #4632.
-- **Nothing writes it yet,** on purpose. Changing it before Xero reads it would
-  give the ledger and the invoices two different answers, so a census fails on
-  any code that writes the row.
-- **Charges are already recorded.** Since M3b (#4627), the journal records each
-  booking door's charge lines for every club whose currency can be charged by
-  card. Until #4632 provides the tax screen, it uses the default GST-inclusive
-  15% treatment, matching the Xero invoices. A club that is not GST-registered
-  should expect its booking charges to be recorded with that same default tax
-  split in the meantime. That split does not match its real position until the
-  #4632 screen lets it change the setting, and no screen or Xero document uses
-  those tax figures yet. A journal refusal stops the booking or payment change
-  rather than being ignored
+- **Default.** With no row beyond the baseline, the club is GST-registered at
+  15% from 1 October 2010, Xero code `OUTPUT2`, with GST included in every
+  price. That is the treatment every Xero document and the member-money
+  ledger already rendered, so a deployment that never schedules a change
+  records and invoices charges exactly as it always did.
+- **Who reads it.** The member-money ledger and every Xero document resolve
+  the same schedule through the same reader and renderer
+  (`docs/xero/ARCHITECTURE.md#tax-treatment`), never a hard-coded tax code.
+  Which period a charge takes is fixed by its own anchor — a booking's or
+  charge's creation date — never the day it is rendered or posted, so a
+  booking keeps the treatment it was made under for its whole life.
+- **Who writes it.** A Full Admin schedules a change from the "GST / tax
+  treatment" card on `/admin/finance/xero`, or `PUT`/`DELETE
+  /api/admin/club-tax` directly. A change only ever adds a period that starts
+  after the club's today, so no document already rendered changes, and is
+  refused when Xero's own tax-rate list does not carry the chosen code,
+  active and usable on revenue, at the chosen rate.
+- **Tax categories.** Sales tax on expenses, Exempt and Zero rated map to
+  the connected Xero organisation's own tax rates (`XeroTaxCategoryMapping`,
+  `INV-CONFIG-008`, #5209), set by a Full Admin on the Xero setup screen;
+  Sales tax on income is the schedule above. There is no environment
+  variable and nothing to do on upgrade: an unmapped category changes no
+  document until a line uses it.
+- **Charges are recorded.** Since M3b (#4627), the journal records each
+  booking door's charge lines under the schedule above. A journal refusal
+  stops the booking or payment change rather than being ignored
   ([`INV-MONEY-044`](docs/invariants/money.md#inv-money-044)).
 
 ## Finance dashboard
@@ -2765,6 +2789,18 @@ read `MemberAccessRole` rows.
 | `SES_SNS_ALLOW_SIGNATURE_V1`             | Temporarily permit legacy SNS SignatureVersion 1 (SHA1). Default rejects v1; enable SignatureVersion 2 on the SNS topic and leave this unset in production.   |
 | `BULK_SENDMAIL_LIMIT`                    | Admin bulk-communication sends allowed per hour (default `1`).                                                                                               |
 
+**SNS delivery policy for SES feedback (#4921).** The SES/SNS route answers
+503 while an earlier attempt at the same notification still holds its
+15-minute processing lease, and takes the notification over only on a
+redelivery after the lease has run out. SNS's default HTTP/S delivery policy
+retries 3 times, 20 seconds apart, so a notification whose first attempt
+crashed is dropped before then. Set an HTTP/S delivery policy on the
+subscription (or topic) that keeps retrying past 15 minutes, within SNS's
+3,600-second hard limit, and attach a dead-letter queue. For example:
+`{"healthyRetryPolicy":{"minDelayTarget":20,"maxDelayTarget":120,"numRetries":30,"numNoDelayRetries":0,"numMinDelayRetries":3,"numMaxDelayRetries":20,"backoffFunction":"exponential"}}`
+retries for roughly 50 minutes. See
+[Amazon SNS message delivery retries](https://docs.aws.amazon.com/sns/latest/dg/sns-message-delivery-retries.html).
+
 ## Address Autocomplete
 
 | Variable          | Description                                     |
@@ -2785,13 +2821,43 @@ rate-limited, or temporarily unavailable.
 
 | Variable                                  | Description                                                                                                      |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `SENTRY_DSN`                              | Server/edge Sentry DSN.                                                                                          |
-| `NEXT_PUBLIC_SENTRY_DSN`                  | Browser Sentry DSN.                                                                                              |
+| `SENTRY_DSN`                              | Server/edge Sentry DSN, read at runtime.                                                                         |
+| `NEXT_PUBLIC_SENTRY_DSN`                  | Browser Sentry DSN, read at runtime through a public no-store endpoint; blank disables browser reporting.        |
 | `SENTRY_ORG`                              | Sentry organization slug for source map uploads.                                                                 |
 | `SENTRY_PROJECT`                          | Sentry project slug for source map uploads.                                                                      |
 | `SENTRY_AUTH_TOKEN`                       | Sentry auth token for source map uploads during build.                                                           |
 | `OBSERVABILITY_SENTRY_DEDUP_COOLDOWN_MS` | Optional in-process cooldown for Sentry event deduplication, shared by the cron/webhook bridge and the auth-bounce anomaly alert (#1669); defaults to 300000 ms. |
 | `AUTH_BOUNCE_AUDIT_MAX_WRITES_PER_MINUTE` | Optional per-process cap on durable auth-bounce `AuditLog` rows per minute (#1669); suppressed rows are tallied onto the next written row. Defaults to 10. |
+
+Both DSNs belong in the deployment's `.env`, including when using published
+images or `--build-and-push-images`. Restart/redeploy after changing them; no
+image rebuild is needed. New page loads fetch only `NEXT_PUBLIC_SENTRY_DSN`
+from `/api/observability/browser-config` before initializing browser reporting.
+Failed or empty configuration leaves reporting and replay off. Errors before
+that fetch completes are not reported. Replay still needs the separate club
+privacy opt-in; its default remains off.
+
+**Neither the server nor the browser sends session data (#5262).** Server and
+browser events carry the installed version as their Sentry `release` (see
+`APP_VERSION`), for tagging only. Sentry's session tracking, which it uses for
+release health and crash-free rates, is switched off on both. On the server,
+`src/lib/sentry-server-integrations.ts` turns off the per-request counting in
+the SDK's `Http` integration and drops its `ProcessSession` integration. In the
+browser, `src/instrumentation-client.ts` drops the SDK's `BrowserSession`
+integration. The edge SDK has no session tracking. Sentry therefore gets no
+session data for those figures. Before this change, a server with `SENTRY_DSN`
+set sent Sentry a count of requests by outcome for each minute, with the
+release and environment, and session updates for the server process when an
+error was reported before its first request, or when it exited without
+serving one. Error events and performance
+traces are unchanged. Nothing to set.
+
+**Upgrade action:** before deploying the first release with runtime browser
+Sentry, set `NEXT_PUBLIC_SENTRY_DSN` in `.env` if browser reports are wanted.
+This applies to the maintainer's deployment too: published images no longer
+supply the upstream destination. Leaving it blank deliberately disables browser
+reports. Sentry DSNs are environment settings, not in-app credentials; upload
+credentials remain build-time settings.
 
 ## Cron, Waitlist, And Backups
 
@@ -2945,9 +3011,10 @@ Public forks should keep live provider credentials out of GitHub Actions. Use
 Stripe test mode, Xero demo tenants, SES sandbox credentials, and non-production
 databases for validation.
 
-The status board reads one repository variable (Settings, then Secrets and
-variables, then Actions):
+The status board and the budget gate each read one repository variable
+(Settings, then Secrets and variables, then Actions):
 
 | Variable | Description |
 | --- | --- |
+| `QUALITY_BUDGET_UPSTREAM_REPO` | Optional, and for a deployment fork only: leave it unset in this repository. The `owner/repo` on github.com the fork syncs down from, such as `thatskiff33/AlpineClubBookingsNZ`. When set, CI's file-size budget step fetches that repository's `main` and trusts it, so a sync-down is not refused for upstream's own reviewed code (#5196); see [Syncing a fork from upstream](docs/MAINTENANCE.md#syncing-a-fork-from-upstream). The upstream must be public; the fetch needs no extra credentials. A malformed value or a failed fetch fails the step. |
 | `STATUS_BOARD_ISSUE` | Optional. The number of the issue whose body `.github/workflows/status-board.yml` overwrites hourly with the generated lane status board (#4464). Only the repository owner can set it; see [status board setup](docs/agents/COORDINATION.md#the-status-board). While unset, the job warns and writes nothing. It refuses an issue that is a pull request or whose body is neither empty nor an earlier board. |

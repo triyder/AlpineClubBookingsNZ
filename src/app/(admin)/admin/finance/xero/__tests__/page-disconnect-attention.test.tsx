@@ -42,6 +42,7 @@ vi.mock("../_components/panels", async () => {
         Disconnect
       </button>
     ),
+    ClubTaxCard: stub,
     ContactSyncPanel: stub,
     ErasedMemberContactsPanel: stub,
     HealthAndDiagnosticsPanels: stub,
@@ -50,6 +51,7 @@ vi.mock("../_components/panels", async () => {
     MissingContactsPanel: stub,
     OperationsPanel: stub,
     SyncResultsPanel: stub,
+    TaxCategoryMappingCard: stub,
     UsagePanel: stub,
   };
 });

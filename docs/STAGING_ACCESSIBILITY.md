@@ -412,16 +412,18 @@ Not done here, and still true after it:
 - The admin and finance card titles, and the member components that several
   kinds of page share (the edit-booking panel, the booking editor and the
   guest-consent card), are swept by area, each sweep lowering the census
-  baseline.
+  baseline. Superseded by #5216 below.
 - These member routes still show the default tab title: `/profile`, `/book`,
   `/induction`, `/maintenance-report`, `/forgot-password`, `/register`,
-  `/login/verify`, `/login/enroll` and `/chores/[token]`.
+  `/login/verify`, `/login/enroll` and `/chores/[token]`. Superseded by #5217
+  below, which titles them.
 - Lodge and hut-leader instruction bodies are admin-written HTML shown as
   written, so an H1 inside one adds a second level-1 heading to that page.
+  Superseded by #5218 below.
 - The membership application page (`/join/apply`, under `src/app/(website)`)
   is outside the census roots. Its "Application submitted" state has no
   level-1 heading, and the right level depends on whether the page is embedded
-  in a CMS page that already has one.
+  in a CMS page that already has one. Superseded by #5217 below.
 - The collapsible profile cards put their level-2 title inside a `<summary>`.
   That is valid HTML, but whether each screen reader lists it in its heading
   list is untested.
@@ -500,3 +502,107 @@ Stated limits:
   membership-cancellation and nomination confirmations). Whether a given screen
   reader reads such a line once or twice is untested, so the manual screen-reader
   pass should listen for it.
+
+## #5217 Remaining Member Tab Titles and the Application Confirmation (2026-11-18)
+
+Static fix, finishing the two items #4951 left open.
+
+- **Tab titles.** `/profile`, `/book`, `/induction`, `/maintenance-report`,
+  `/forgot-password`, `/register`, `/login/verify`, `/login/enroll` and
+  `/chores/[token]` now set a fixed title, the same way as the #4951 routes.
+  `/chores/[token]` is "Your chores": it carries neither the guest's name nor
+  the token. `/register` only redirects to `/join/apply`, so its title shows
+  for no longer than the redirect takes. With these, every page under
+  `src/app/(public)`, `src/app/(authenticated)` and `src/app/(website-dynamic)`
+  sets its own title, and `src/app/__tests__/member-route-titles.test.ts` now
+  fails a new page there that sets none.
+- **"Application submitted" on `/join/apply`.** The page's hero holds its
+  `<h1>` and stays on screen when the form gives way to the confirmation, so
+  the page never lacked a level-1 heading; what was missing was the
+  confirmation itself, whose title only looked like a heading. It is now a
+  level-2 heading under the page's `<h1>`, on `/join/apply` and on any CMS
+  page that embeds the form, so someone who has just applied can jump to it.
+  The form component can also draw the hero itself; there the hero goes away
+  with the form, and the confirmation is level 1 instead. No visual change.
+  Pinned by `src/app/__tests__/join-apply-state-headings.test.tsx`, which
+  renders the real page and form together in each state.
+
+Not done here, and still true after it:
+
+- `/chores/[token]` shows only "Loading..." while it fetches, with no level-1
+  heading in that state.
+- The lodge kiosk screens under `src/app/(lodge)` are not member routes and
+  still show the default tab title.
+- The "Enter your details" card title on `/join/apply` is still unclassified,
+  like the rest of the public website's card titles. Card-title classification
+  is tracked in #5216. Superseded by #5216 below.
+
+## #5218 Headings Inside the Lodge Instructions (2026-11-21)
+
+Static fix, finishing the instructions item #4951 left open. An H1 an admin
+writes in the lodge instructions is now rendered as an H2, as a notice body's
+already is, on `/lodge-instructions`, `/hut-leader-instructions`, the lodge
+kiosk's instructions section and the lobby display's rules card. Each of those
+screens keeps its own one level-1 heading. That heading is drawn at heading-2
+size; nothing else changes. The stored instructions and the admin editor keep
+the H1 as written. Pinned by
+`src/app/__tests__/instruction-screen-headings.test.tsx`, which renders each
+screen from a stored document holding an H1. Since #5345 each source those
+screens read is pinned too: the three instruction routes
+(`/api/lodge-instructions`, `/api/lodge/instructions` and
+`/api/lodge/instructions/preview`) and the lobby display state each have a
+test that the same stored H1 comes back with no level-1 heading, in
+`lodge-instructions.test.ts`, `lodge-instructions-preview-route.test.ts` and
+`lodge-display-state.test.ts` under `src/lib/__tests__/`. Those tests do not
+pin the level it lands on.
+
+## #5216 Member card titles as headings (2026-11-22)
+
+Static fix, the first of seven pull requests that sweep the card titles #4951
+left unclassified. Each swept title is now a level-2 heading under its page's
+one level-1 heading, so a screen-reader user can reach it from the heading
+list. Nothing looks different: `CardTitle` draws the same element and classes
+and adds `role="heading"` and `aria-level="2"`.
+
+- **Swept.** 21 card titles in 14 files, each given `headingLevel={2}`: Stay
+  Details, Guests and Payment in `booking-editor.tsx`; the eight cards of the
+  Edit Booking panel in `src/components/edit-booking/` (dates, guests, account
+  credit, price summary, admin override, admin request, the finished-stay
+  correction, and promo codes, which has four titles); the guest-consent card's
+  question and its two answers; "Admin tools", "Additional payment
+  outstanding" and "Confirm pending guests now" on `/bookings/[id]`; and
+  "Enter your details" on `/join/apply`.
+- **Census.** `card-title-classification-census.test.ts` now fails an
+  unclassified title in those 14 files and under `src/app/(website)/` (and,
+  since #5372, anywhere under `src/components/website/`), and
+  `UNCLASSIFIED_BASELINE` falls from 252 to 231, the 21 titles swept. All 231
+  that remain are on admin and finance screens, still swept by area, each
+  sweep lowering the baseline.
+- **Outline helper.** `src/lib/__tests__/support/heading-outline.ts` is the one
+  definition of the two outline checks: exactly one named level-1 heading, and
+  no heading more than one level deeper than the one before it.
+
+Pinned by `src/app/__tests__/booking-detail-card-headings.test.tsx` (the
+officer's cards and the guest-consent card's three states on `/bookings/[id]`),
+`src/components/edit-booking/__tests__/heading-outline.test.tsx` (the booking
+editor and the Edit Booking panel in seven states) and
+`src/lib/__tests__/support/heading-outline.test.tsx` (the helper's own six
+cases). `src/app/__tests__/join-apply-state-headings.test.tsx` also asserts
+that "Enter your details" is level 2 and that no state skips a level.
+
+Stated limits:
+
+- The booking-detail and edit-booking tests render the real cards under a
+  hand-written `<h1>Booking Details</h1>`, not the real async `/bookings/[id]`
+  page, so they would not notice a second level-1 heading added to that page.
+  Since #5372 `issue-2779-draft-pickup-card.test.ts` reads the page's own file
+  and fails unless it holds exactly one level-1 heading. It reads that file
+  only, not the components the page renders.
+- On the public website the census forbids an unclassified title under two
+  folders: `src/app/(website)/`, the pages, which hold no card title, and,
+  since #5372, `src/components/website/`, the cards those pages draw. A card a
+  website page takes from any other folder is forbidden only if that folder is
+  one of the member-facing roots or the file is on the census's list.
+  Otherwise only the baseline count holds it.
+- These are DOM-level checks of roles and levels. A real screen-reader
+  walkthrough stays a human manual-QA task, as in the earlier sections.

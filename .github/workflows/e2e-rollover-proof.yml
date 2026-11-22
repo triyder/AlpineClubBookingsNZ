@@ -94,7 +94,7 @@ concurrency:
 jobs:
   rollover-proof:
     name: Browser suite at a month rollover
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 90
     env:
       STRIPE_TEST_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
@@ -380,7 +380,6 @@ jobs:
           push: false
           tags: tacbookings-e2e-app:ci
           build-args: |
-            NEXT_PUBLIC_SENTRY_DSN=
             RELEASE_ID=${{ github.sha }}
             NODE_OPTIONS=${{ env.NODE_BUILD_OPTIONS }}
           cache-from: |

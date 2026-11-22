@@ -784,11 +784,22 @@ Minimum production categories:
   is not reachable from web containers at
   `http://app:3000/api/deploy/runtime-status`
 - Observability: `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_ORG`,
-  `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN`
+  `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN`. Both DSNs are read at runtime from
+  `.env`; changing them needs a restart/redeploy, not a rebuild. Browser Sentry
+  stays off if `NEXT_PUBLIC_SENTRY_DSN` is blank or runtime configuration cannot
+  be fetched. Source-map upload credentials remain build-time settings.
 
 Do not commit `.env` files or production secrets.
 
 ## GitHub Container Registry
+
+Published images contain no browser Sentry destination. Before upgrading to
+runtime browser Sentry, every operator, including the upstream maintainer,
+must set `NEXT_PUBLIC_SENTRY_DSN` in the deployment's `.env` if browser error
+reports are wanted. It works identically with published images and host builds
+(`--build-and-push-images`). Leaving it blank disables browser reporting;
+replay additionally requires the club's privacy opt-in. See
+[`CONFIGURATION.md`](CONFIGURATION.md#sentry).
 
 GitHub Actions publishes production images from each `main` commit's own CI
 run, once its gates pass (the `Publish GHCR images` job in `ci.yml`):
@@ -808,13 +819,18 @@ echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u <owner> --password-stdin
 
 Do not store that token in the repository or `.env`.
 
-Every push to `main` gets a CI run of its own that runs to completion; a later
-merge never cancels or replaces it (`INV-OPS-021`). So a `main` commit has
-images exactly when its run's `Publish GHCR images` job succeeded — not merely
-because it is on `main`. A run whose `Publish GHCR images` job did not succeed
-(skipped after a failed gate, failed, or cancelled by hand) published nothing;
-re-run it with `gh run rerun <run-id>`. `pnpm run release:cut publish`
-asks GitHub for that job's result and will not tag a commit without images.
+A `main` commit has images exactly when its CI run's `Publish GHCR images`
+job succeeded, not merely because it is on `main`. A newer merge may replace
+`main`'s queued run, so an intermediate `main` commit can have no run and no
+images; a run that has started always finishes, and the newest `main` commit
+normally gets one (a manual re-run can replace its pending run; `INV-OPS-021`,
+#5356). A run whose `Publish GHCR images` job did not succeed (replaced while
+queued, skipped after a failed gate, failed, or cancelled by hand) published
+nothing; re-run it with `gh run rerun <run-id>`. A re-run joins `main`'s queue
+and replaces whatever is pending there, so start it only when nothing is
+pending on `main` (`gh run list --workflow ci.yml --branch main --status pending`).
+`pnpm run release:cut publish` tags `origin/main` by default, asks GitHub for
+that job's result, and will not tag a commit without images.
 
 ### Supply chain
 
@@ -824,9 +840,9 @@ workflow and composite-action references, including `docker://` actions.
 External images in the Dockerfile and Compose files keep readable tags and pin
 the multi-architecture index digest. Dependabot proposes Action and Docker
 updates for review. The pnpm minimum release age matches the npm Dependabot
-cooldown: seven days (`10080` minutes).
-The already-locked `nodemailer@10.2.1` has an exact-version exception so frozen
-installs work during rollout; remove it after the next Nodemailer update.
+cooldown: seven days (`10080` minutes). No version is exempt from it: the
+exact-version exception made during rollout, for the already-locked
+`nodemailer@10.2.1`, was removed once `main` had moved to a later Nodemailer.
 
 Both published images include a BuildKit SBOM and maximum build provenance,
 plus a GitHub build provenance attestation tied to the pushed image digest.
@@ -1279,7 +1295,7 @@ image stops the engine before image inspection; it never guesses a local tag.
 ## Public Rate Limits And Proxy Headers
 
 Public route rate limits are process-local sliding windows keyed by
-`getClientIp()` in `src/lib/rate-limit.ts`. This is acceptable for the supported
+`getClientIp()` in `src/lib/rate-limit-http.ts`. This is acceptable for the supported
 production shape because Caddy is the only public listener and routes traffic to
 one active web slot at a time.
 
@@ -1289,11 +1305,14 @@ old and new slots, so public abuse controls can be temporarily split across both
 runtimes during that drain. Do not run multiple publicly routed app replicas
 long-term unless the in-memory limiter is replaced with a shared store.
 
-**A `Caddyfile` change does not ship with an app deploy.** The blue/green runner
-rebuilds and cuts over the app slots; it does not reload Caddy. After pulling a
-release whose diff touches `Caddyfile` or `Caddyfile.staging` — request-body
-caps, security headers, routing — reload Caddy explicitly on the host, and check
-the config first so a typo cannot take the site down:
+**The production deploy picks up a `Caddyfile` change by itself.**
+`docker-compose.yml` mounts the checkout's `Caddyfile` into the Caddy
+container, and `scripts/run-production-blue-green-deploy.sh` validates it before
+it changes anything (step 4) and, at cutover (step 17), runs
+`docker compose up -d caddy` and reloads Caddy. Nothing is needed by hand. Only
+when a `Caddyfile` or `Caddyfile.staging` change reaches a host some other way
+(a staging host, or a deploy that does not use that script) reload Caddy
+explicitly, and check the config first so a typo cannot take the site down:
 
 ```bash
 docker compose exec caddy caddy validate --config /etc/caddy/Caddyfile
@@ -1305,15 +1324,32 @@ connections and the TLS certificate cache. If `validate` fails, fix the file
 before reloading — the running config stays in place until a reload succeeds.
 
 The app trusts proxy-derived client IP headers only under that Caddy boundary.
-`getClientIp()` uses the rightmost `X-Forwarded-For` value, which is the peer
-Caddy appended closest to the app container, then falls back to `X-Real-IP`.
+Caddy replaces `X-Forwarded-For` with its resolved client IP (`header_up
+X-Forwarded-For {client_ip}` in `deploy/caddy/tacbookings-active.caddy`), which
+is the connecting peer when Caddy is the edge and, in `CADDY_TLS_MODE=local`,
+the address the trusted proxy forwarded — see "Client IPs behind the proxy"
+below. The app therefore normally sees one address. `getClientIp()` takes the
+last `X-Forwarded-For` address, or `X-Real-IP` when that header is absent. The
+last-address rule is for a proxy that appends to the header instead of
+replacing it, where the first address is whatever the caller sent.
+
+The audit log records the same address as the rate limits: every route that
+writes a caller's IP takes it from `getClientIp()`, and lint refuses a direct
+read of a client-address header anywhere else (#5399). It is the address the hop
+nearest the app saw, so it is the visitor's only in the supported shape:
+
+- **Behind more than one proxy** (a CDN in front of another proxy, say), the
+  hop nearest the app must resolve the visitor's address and overwrite the
+  header. That is the reference Caddy in local mode, with
+  `CADDY_TRUSTED_PROXIES` covering every hop in front of it. Otherwise the last
+  address is the next hop's own peer, such as a CDN edge address many visitors
+  share, and both the audit log and the per-address rate limits see that.
+- **With no proxy at all**, the caller sets `X-Forwarded-For` and `X-Real-IP`
+  freely, so neither the audit address nor a rate-limit key can be trusted.
+
 Do not expose app containers directly to the Internet or through another proxy
 that preserves attacker-supplied `X-Forwarded-For` values without appending its
 own trusted peer address.
-Caddy sets that header to its resolved client IP (`header_up X-Forwarded-For
-{client_ip}` in `deploy/caddy/tacbookings-active.caddy`), which is the connecting
-peer when Caddy is the edge and, in `CADDY_TLS_MODE=local`, the address the
-trusted proxy forwarded — see "Client IPs behind the proxy" below.
 
 ### Hostnames and DNS records
 
@@ -2207,13 +2243,16 @@ release acknowledges an event it does not know and drops it. With them the app
 keeps one record per cardholder dispute (chargeback), emails Finance when a
 dispute opens and when it closes, shows "Disputed by cardholder" on the
 booking and on **Finance → Payments**, and, while a dispute is open or lost,
-issues no card refund or account credit for that payment: a cancel is handed to
-the treasurer instead (`INV-PAY-154`). Disputes opened before the upgrade are
+issues no card refund or account credit for that payment: a cancel, or an edit
+that lowers the price, is handed to the treasurer instead (`INV-PAY-154`). Disputes opened before the upgrade are
 not back-filled, so check Stripe's **Disputes** page once after adding the
 events and handle any open dispute by hand.
 
 **Recording a lost dispute in Xero (treasurer, by hand).** The app posts
-nothing to Xero for a dispute. When the Finance alert says a dispute was lost:
+nothing to Xero for a dispute, nor a credit note for a cancel's or edit's
+refund it handed to the treasurer because of one. If you pay such a refund
+while the dispute is open, record the refund in Xero by hand as you would any
+bank-transfer refund. When the Finance alert says a dispute was lost:
 
 1. In Stripe, open the dispute and note the disputed amount, Stripe's dispute
    fee and the payout that carried the withdrawal.
@@ -2223,12 +2262,41 @@ nothing to Xero for a dispute. When the Finance alert says a dispute was lost:
    the booking and the Stripe dispute id, and a second for the dispute fee,
    coded to bank fees.
 3. Reconcile both against the Stripe payout that carried them.
-4. Do not refund or credit the member: the bank has already returned their
-   money. Resolve the cancellation's treasurer task, if one was raised, by
-   dismissing it with the dispute id as the reason.
+4. Do not refund or credit the member for the lost amount: the bank has
+   already returned it. Resolve the cancellation's or edit's treasurer task in
+   Finance > Payments. The lost amount is counted once across all the refunds
+   on that card payment, oldest refund first. Where it covers what a task still
+   owes, the task offers **Dismiss** (give the dispute id as the reason). Where
+   it covers only part, the task offers **Reduce by lost dispute**, which takes
+   exactly the lost part off; mark the rest paid once you have sent it. A task
+   the loss does not reach (it went to an older refund) stays owed in full.
+   Neither task offers **Mark paid back** while lost money is set against it,
+   and while another dispute on the payment is still open, wait for it.
+   **Before upgrading to the release with this rule (#4516),** look in
+   Finance > Payments for refund tasks on a disputed card payment that were
+   dismissed while the dispute was still open. The app counts every dismissed
+   one as lost money already applied, so a later refund on that payment is
+   reduced by less than was lost (a $50 refund dismissed early, then $150 lost
+   against a $150 refund, leaves $50 the club pays twice). Note each one for
+   the treasurer, who settles that payment's later refund by hand.
 
 A won dispute needs no Xero entry unless the withdrawal was recorded by hand
 before the win; then record its reversal the same way.
+
+**A lost dispute later won (treasurer, by hand).** Stripe can reverse a lost
+dispute, for example after an appeal. The app then sends Finance one more
+alert, "Lost card payment dispute now won". If you recorded the loss in Xero:
+
+1. In Stripe, note the payout that carried the returned amount and whether the
+   dispute fee came back with it.
+2. In Xero, record a receive money transaction into the Stripe clearing account
+   for the returned amount, coded to the same account as the loss and
+   referencing the booking and the Stripe dispute id, and a second for the fee
+   if Stripe returned it.
+3. Reconcile both against that payout.
+4. A treasurer task the app raised while the dispute held stays open. If you
+   already dismissed it, the member's refund or credit is now owed again: pay
+   it as the task would have.
 
 If Stripe webhook delivery was missed while the endpoint, DNS, TLS, or the
 signing secret stored under **Admin > Integrations > Stripe** was wrong (it is
@@ -2652,6 +2720,12 @@ before deployment; Admin Modules do not replace that safety check.
 Preferred rollback is to route Caddy back to the previous healthy color while it
 is still running. If schema changes have already applied, rollback must respect
 the migration policy and any compatibility constraints in the migration PR.
+
+**Not below v0.14.0 once it has run (#5270).** Routing back to a colour older
+than v0.14.0 can let an old copy retry a saved-card charge under a different key
+and charge a member twice, and a backup cannot undo a charge at Stripe. Recover
+on v0.14.0 or later. The boundary and the checks to run if it was crossed are in
+the [saved-card upgrade and rollback boundary](docs/UPGRADING.md#saved-card-upgrade-and-rollback-boundary-5270).
 
 **Not once a data-encryption key is in use (#4456).** Rows written under
 `DATA_ENCRYPTION_KEYS` cannot be read by an older release or by a colour started

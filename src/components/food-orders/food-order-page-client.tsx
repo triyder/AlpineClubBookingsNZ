@@ -21,7 +21,7 @@ import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import { DEFAULT_FOOD_OFFICER_LABEL } from "@/lib/food-order-rules";
 
 /**
- * The members' Order food screen (fork #121), shaped like `/maintenance-report`:
+ * The members' Order food screen (fork triyder/AlpineClubBookingsNZ#121), shaped like `/maintenance-report`:
  * it fetches what the form needs from `GET /api/food-orders` and posts back to
  * the same address. `src/app/(authenticated)/food-order/page.tsx` renders it
  * only while the module is on. With no food officer email set the API says
@@ -86,7 +86,7 @@ export function FoodOrderPageClient() {
       <div className="mx-auto max-w-xl space-y-6 p-4 sm:p-6">
         <Card>
           <CardHeader>
-            <CardTitle headingLevel={2} className="flex items-center gap-2">
+            <CardTitle headingLevel={1} className="flex items-center gap-2">
               <CheckCircle2 className="h-5 w-5 text-primary" aria-hidden="true" />
               Thank you — your order has been placed
             </CardTitle>

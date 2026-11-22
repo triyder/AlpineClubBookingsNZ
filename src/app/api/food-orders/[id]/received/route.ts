@@ -16,14 +16,15 @@ import {
   markFoodOrderItemsReceived,
 } from "@/lib/food-orders";
 import { requireActiveSession } from "@/lib/session-guards";
+import { parseJsonRequestBody } from "@/lib/api-json";
 
 /**
- * Tick items of a food order received (fork #121; owner change, 13 Nov 2026:
+ * Tick items of a food order received (fork triyder/AlpineClubBookingsNZ#121; owner change, 13 Nov 2026:
  * food can arrive in parts). The order closes as Received when its last item
- * is (owner decision 7).
+ * is (fork triyder/AlpineClubBookingsNZ#121 owner decision 7).
  *
- * Who: `canManageFoodOrder` — committee, a hut leader at THIS order's lodge
- * today, or Lodge Operations edit. An order the caller may not even see answers
+ * Who: `canManageFoodOrder` — a hut leader at THIS order's lodge today, or
+ * Lodge Operations edit. An order the caller may not even see answers
  * 404, so the route is not an oracle for other members' order ids; one they can
  * see but not manage answers 403.
  *
@@ -61,18 +62,17 @@ export async function POST(
     return NextResponse.json(
       {
         error:
-          "Only a committee member, a hut leader at this lodge, or a Lodge Operations admin can mark this order's items received.",
+          "Only a hut leader at this lodge or a Lodge Operations edit admin can mark this order's items received.",
       },
       { status: 403 },
     );
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = bodySchema.safeParse(body);
   const ownItemIds = new Set(order.items.map((item) => item.id));
   if (!parsed.success || !parsed.data.itemIds.every((itemId) => ownItemIds.has(itemId))) {

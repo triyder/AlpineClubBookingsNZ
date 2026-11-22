@@ -1,5 +1,5 @@
 /**
- * "Add booking to work party" (fork #119): an officer attaches an existing
+ * "Add booking to work party" (fork triyder/AlpineClubBookingsNZ#119): an officer attaches an existing
  * booking to a work party the member was entitled to and missed, so the booking
  * gets the working-bee discount exactly as if the member had ticked "I am
  * attending a working bee" when booking.
@@ -14,21 +14,27 @@
  *    (`officerWorkPartyCorrection`, a service argument the batch service
  *    receives beside `tx`; no request body can carry it), and the money rule
  *    that comes with it — no change fee, and the reduction returned in full;
- *  - the settlement (#129 decisions 1 and 5, `workPartySettlementOptions`):
- *    account credit by default; on a booking paid by card the officer may
- *    choose a refund to the card instead; a joiner's booking its group
- *    organiser paid goes back to the organiser, as every edit of one does. A
- *    refund is the pipeline's own (`settlementMethod: "card"`): this module
- *    calls no provider and writes no refund row of its own;
- *  - the eligibility rule (`workPartyBookingEligibility`), shared with the UI;
- *  - the owner's rule for the officer's own and family's bookings (#129
- *    decision 6, `workPartyOwnMoneyBackRefusal`): allowed while nothing comes
- *    back, refused when the change would refund or credit money to the officer
- *    or their family, which another officer must then do;
+ *  - the settlement (`workPartySettlementOptions`; upstream owner decision of
+ *    15 Nov 2026 on #5149, triyder/AlpineClubBookingsNZ#129 decision 5): account credit by default;
+ *    wherever the ordinary edit offers a refund (any paid booking: card, or
+ *    Internet Banking), the officer may choose that refund instead, which goes
+ *    back the way the booking was paid — to the card, or by the bank-transfer
+ *    hand-back; a joiner's booking its group organiser paid goes back to the
+ *    organiser, as every edit of one does. A refund is the pipeline's own
+ *    (`settlementMethod: "card"`): this module calls no provider and writes no
+ *    refund row or task of its own;
+ *  - the eligibility rule (`workPartyBookingEligibility`), shared with the UI
+ *    and read from one set of facts (`readWorkPartyBookingFacts`). It holds
+ *    owner decision 3 of 18 Nov 2026 (maintainers' comment,
+ *    https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-6951626920):
+ *    an officer never adds or removes their own or their family's booking —
+ *    its owner, or the organiser who paid for a joiner, and their family
+ *    groups — whatever the money does; another officer must;
  *  - a dry run for the confirm dialog and a figures check on the save, so the
- *    officer is charged-or-credited exactly what they were shown (#4030 C4);
- *  - a started stay (#127) priced whole (`INV-MOD-063`), so every night in the
- *    window is discounted, slept or not; and Remove (#130), the same edit with
+ *    officer is charged-or-credited exactly what they were shown (#4030 C4),
+ *    the edit's own quoted-figures check (`INV-MOD-062`) included;
+ *  - a started stay (fork triyder/AlpineClubBookingsNZ#127) priced whole (`INV-MOD-063`), so every night in the
+ *    window is discounted, slept or not; and Remove (fork triyder/AlpineClubBookingsNZ#130), the same edit with
  *    the code taken off, its increase owed on the booking.
  *
  * LOCKS (`INV-LOCK-001`/`-002`), the order #4533's executor and every booking
@@ -48,26 +54,35 @@ import { dateOnlyInstantOf, type CalendarDate } from "@/lib/club-time";
 import type { ClubFormat } from "@/lib/club-format";
 import { ApiError } from "@/lib/api-error";
 import { paidByOrganiser } from "@/lib/group-organiser-paid";
-import { hasSettledCardPayment } from "@/lib/booking-payment-state";
-import { getAllowedGuestMemberIds, type BookingGuestLookupDb } from "@/lib/booking-guests";
 import { reauthorizeBookingOfficerFromDb } from "@/lib/booking-exception-approval";
-import { defaultCorrectionSettlementMethod } from "@/lib/booking-finished-stay-correction";
 import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
-import { bookingOwner } from "@/lib/booking-owner";
 import {
   activeLifecycleEditRefusal,
   isFinishedStay,
 } from "@/lib/booking-edit-policy";
-import { isQuotePricedBooking } from "@/lib/booking-modify-quote-priced";
 import type { BookingModificationSettlementMethod } from "@/lib/booking-modify";
+import { EditPriceChangedError } from "@/lib/edit-quoted-figures";
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
-import { PROMO_WORK_PARTY_EXCLUSION_MESSAGE } from "@/lib/promo-code-list-rules";
+import { promoCodeListRefusal } from "@/lib/promo-code-list-rules";
+import {
+  WORK_PARTY_CORRECTION_FIGURES_CHANGED_MESSAGE,
+  WORK_PARTY_FIGURES_CHANGED_CODE,
+} from "@/lib/work-party-figures-changed";
 import {
   modifyBookingBatch,
   type BatchModificationPreTransaction,
 } from "@/lib/booking-batch-modification-service";
 import { workPartyEventRefusal } from "@/lib/work-party";
 import { editTotalMoneyBackCents } from "@/lib/edit-money-back";
+import { readWorkPartyBookingFacts, WORK_PARTY_BOOKING_SELECT } from "@/lib/work-party-booking-facts";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET } from "@/lib/db-transaction";
+import {
+  resolveWorkPartySettlementMethod,
+  workPartyAskOffset,
+  workPartyDefaultSettlementMethod,
+  workPartySettlementOptions,
+  type WorkPartySettlementOptions,
+} from "@/lib/work-party-settlement-options";
 
 export type WorkPartyBookingEligibility =
   | { ok: true }
@@ -80,12 +95,14 @@ export interface WorkPartyEligibilityBooking {
   checkOut: Date;
   /** A work party's internal promo is already on the booking. */
   hasWorkParty: boolean;
-  /** Another (non-work-party) promo code is on the booking. */
-  hasOtherPromoCode: boolean;
+  /** The booking's other (non-work-party) promo codes, as stored. */
+  otherPromoCodes: readonly string[];
   /** A quote-priced booking (school, request quote), priced by its quote. */
   quotePriced: boolean;
   /** A member owns it (`bookingOwner`); an organisation's booking holds no credit. */
   memberOwned: boolean;
+  /** Owner decision 3: the officer is the owner or paying organiser, or in their family (`workPartyActorIsOwnerOrFamily`). */
+  actorIsOwnerOrFamily: boolean;
 }
 
 /** The facts outside the booking the rule reads. */
@@ -108,17 +125,30 @@ export interface WorkPartyEligibilityEvent {
   promoCode: { active: boolean; archivedAt: Date | null };
 }
 
+export const WORK_PARTY_OWN_BOOKING_MESSAGE =
+  "This is your own or your family's booking, so another officer must change its work party.";
+
+/** Said whether the dispute is still open or already lost: either way the edit holds the money (`INV-PAY-154`). */
+export const WORK_PARTY_DISPUTED_PAYMENT_MESSAGE =
+  "This booking's card payment is disputed, so any money back would be held for the treasurer to settle by hand. Ask the treasurer.";
+
+export const WORK_PARTY_PAID_WITH_NO_MONEY_MESSAGE =
+  "This booking is marked paid, but no money was taken (it was paid with account credit, or nothing). Cancel it, or ask the treasurer.";
+
 /**
- * The refusals Add and Remove share: the edit doors' own editable-status answer
+ * The refusals Add and Remove share: owner decision 3 (never the officer's own
+ * or family's booking), the edit doors' own editable-status answer
  * (`activeLifecycleEditRefusal`, #3245) and a finished stay. A stay that has
- * started is allowed (#127, owner 16 Nov 2026): every night inside the work
- * party's window is repriced, slept or not (`getBookingEditPolicy`'s
- * "work-party-correction" mode).
+ * started is allowed (owner decision 1 of 18 Nov 2026, maintainers' comment
+ * https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-6951626920):
+ * every night inside the work party's window is repriced, slept or not
+ * (`getBookingEditPolicy`'s "work-party-correction" mode).
  */
 function workPartyStayRefusal(
-  booking: { status: string; checkOut: Date; quotePriced: boolean },
+  booking: { status: string; checkOut: Date; quotePriced: boolean; actorIsOwnerOrFamily: boolean },
   today: Date,
 ): string | null {
+  if (booking.actorIsOwnerOrFamily) return WORK_PARTY_OWN_BOOKING_MESSAGE;
   if (activeLifecycleEditRefusal(booking.status, "ADMIN") !== null) {
     return "This booking can't be changed in its current status (only a pending, confirmed or paid booking can).";
   }
@@ -136,10 +166,12 @@ function workPartyStayRefusal(
  * list, the service (again, under the locks) and so the dialog all use. Each
  * refusal is one the canonical edit would make anyway, stated up front in an
  * officer's words rather than discovered at the preview. A started stay is
- * allowed (#127); a finished one is not. An organiser-paid joiner is allowed
- * (#129 decision 5); an officer's own or family's booking is refused only once
- * the figures show money coming back (`workPartyOwnMoneyBackRefusal`). The
- * event answer is `workPartyEventRefusal`; it is not copied.
+ * allowed (fork triyder/AlpineClubBookingsNZ#127); a finished one is not. An organiser-paid joiner is allowed
+ * (triyder/AlpineClubBookingsNZ#129 decision 5); the officer's own or family's booking never is (owner
+ * decision 3). A disputed card payment is refused on the edit's own answer,
+ * only where it would really hold money back (`refundHeldForDispute`, #5151),
+ * so it is not a fact this rule reads. The event answer is
+ * `workPartyEventRefusal`; it is not copied.
  */
 export function workPartyBookingEligibility(
   booking: WorkPartyEligibilityBooking,
@@ -157,9 +189,14 @@ export function workPartyBookingEligibility(
   if (booking.hasWorkParty) {
     return { ok: false, reason: "This booking already has a work party." };
   }
-  if (booking.hasOtherPromoCode && !context.multiPromoCodes) {
-    return { ok: false, reason: PROMO_WORK_PARTY_EXCLUSION_MESSAGE };
-  }
+  // The one list rule the edit itself asks (`promoCodeListRefusal`), in an officer's words.
+  const listRefusal = promoCodeListRefusal({
+    typedCodes: booking.otherPromoCodes,
+    workPartyApplied: true,
+    multiPromoCodes: context.multiPromoCodes,
+    audience: "officer",
+  });
+  if (listRefusal) return { ok: false, reason: listRefusal };
   switch (
     workPartyEventRefusal(event, booking.checkIn, booking.checkOut, context.bookingLodgeId)
   ) {
@@ -177,22 +214,33 @@ export function workPartyBookingEligibility(
   }
 }
 
-/** What "Remove from work party" (#130) reads about the booking. */
+/** What "Remove from work party" (fork triyder/AlpineClubBookingsNZ#130) reads about the booking. */
 export interface WorkPartyRemovalEligibilityBooking {
   status: string;
   checkOut: Date;
   quotePriced: boolean;
   /** The work party whose internal promo is on the booking, or null. */
   workPartyEventId: string | null;
+  /** Owner decision 3, as for an Add. */
+  actorIsOwnerOrFamily: boolean;
+  /** PAID with no money taken: nothing, or account credit alone (`workPartyPaidWithNoMoneyTaken`). */
+  paidWithNoMoneyTaken: boolean;
 }
 
 export const WORK_PARTY_NOT_ON_BOOKING_MESSAGE = "This booking is not on that work party.";
 
 /**
- * Whether this booking may be taken off this work party (#130): the stay
- * rules Add has, and the booking must carry exactly this work party. The
- * event's own state does not matter: an inactive work party can still be
- * removed from a booking it was added to by mistake.
+ * Whether this booking may be taken off this work party (fork triyder/AlpineClubBookingsNZ#130; kept by
+ * owner decision 2 of 18 Nov 2026): the stay rules Add has, owner decision 3
+ * included, and the booking must carry exactly this work party. The event's
+ * own state does not matter: an inactive work party can still be removed from
+ * a booking it was added to by mistake. A booking PAID with no money taken is
+ * refused: with nothing taken (owner decision, 18 Nov 2026, maintainers' comment
+ * https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-6952444211),
+ * or with account credit alone (owner decision, 20 Nov 2026,
+ * https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-7035299228).
+ * An Add brought it to $0 owed and gave it its beds, and a Remove would leave
+ * it paid and holding them while owing what the work party took off.
  */
 export function workPartyRemovalEligibility(
   booking: WorkPartyRemovalEligibilityBooking,
@@ -204,97 +252,8 @@ export function workPartyRemovalEligibility(
   if (booking.workPartyEventId !== workPartyEventId) {
     return { ok: false, reason: WORK_PARTY_NOT_ON_BOOKING_MESSAGE };
   }
+  if (booking.paidWithNoMoneyTaken) return { ok: false, reason: WORK_PARTY_PAID_WITH_NO_MONEY_MESSAGE };
   return { ok: true };
-}
-
-/**
- * Whether the acting officer is this member or in their family (#129 decision
- * 6). Family is the one existing definition, the member-guest boundary's
- * (`getAllowedGuestMemberIds`: the member plus every co-member of all their
- * family groups). No member (an organisation) has no family.
- */
-export async function actorIsMemberOrFamily(
-  db: BookingGuestLookupDb,
-  memberId: string | null,
-  actorMemberId: string,
-): Promise<boolean> {
-  if (!memberId) return false;
-  return (await getAllowedGuestMemberIds(db, memberId)).has(actorMemberId);
-}
-
-export interface WorkPartySettlementOptions {
-  /** The methods offered, the default first. Always one for an organiser-paid joiner. */
-  methods: readonly BookingModificationSettlementMethod[];
-  /** A joiner's booking its group organiser paid: the money goes back to the organiser. */
-  paidByOrganiser: boolean;
-}
-
-/** What `workPartySettlementOptions` reads: the booking's lifecycle and payment. */
-export interface WorkPartySettlementBooking {
-  status: string;
-  organiserSettled: boolean;
-  parentBookingId: string | null;
-  payment: {
-    status: string;
-    amountCents: number;
-    creditAppliedCents: number;
-    source: string;
-  } | null;
-}
-
-/**
- * The settlement methods "Add to work party" offers (#129 decisions 1 and 5).
- * Pure; the service asks it under its locks, so the preview and the save agree.
- *
- *  - An organiser-paid joiner (`paidByOrganiser`): one disposition, the
- *    organiser's, as every edit of such a booking settles
- *    (`defaultCorrectionSettlementMethod` with `paidByOrganiser`).
- *  - Paid by card (`hasSettledCardPayment`, the pipeline's own test of money a
- *    reduction can refund to the card): credit, or card.
- *  - Otherwise (Internet Banking, paid wholly with account credit, unpaid):
- *    credit only.
- */
-export function workPartySettlementOptions(
-  booking: WorkPartySettlementBooking,
-): WorkPartySettlementOptions {
-  if (paidByOrganiser(booking)) {
-    return {
-      methods: [
-        defaultCorrectionSettlementMethod(booking.payment, {
-          changesPromoCodes: true,
-          paidByOrganiser: true,
-        }),
-      ],
-      paidByOrganiser: true,
-    };
-  }
-  return {
-    methods: hasSettledCardPayment(booking) ? ["credit", "card"] : ["credit"],
-    paidByOrganiser: false,
-  };
-}
-
-export const WORK_PARTY_SETTLEMENT_NOT_OFFERED_MESSAGE =
-  "This booking wasn't paid by card, so the discount can only go back as club credit.";
-
-/**
- * The method the change settles by: the officer's, when it is one offered;
- * the default otherwise. A method not offered — `card` on a booking not paid
- * by card — is refused (409), never quietly changed.
- */
-export function resolveWorkPartySettlementMethod(
-  options: WorkPartySettlementOptions,
-  requested: BookingModificationSettlementMethod | undefined,
-): BookingModificationSettlementMethod {
-  if (requested !== undefined && !options.methods.includes(requested)) {
-    throw new ApiError(
-      options.paidByOrganiser
-        ? "This booking was paid by its group organiser, so the discount goes back to the organiser."
-        : WORK_PARTY_SETTLEMENT_NOT_OFFERED_MESSAGE,
-      409,
-    );
-  }
-  return requested ?? options.methods[0]!;
 }
 
 /** What the correction does to the booking's money, shown before and checked on save. */
@@ -305,6 +264,8 @@ export interface WorkPartyCorrectionFigures {
   newFinalPriceCents: number;
   /** The change in price: negative on an Add, positive on a Remove. */
   priceDiffCents: number;
+  /** The edit's change fee: 0 by a correction's money rule, carried so the save checks it (#5149 review M2). */
+  changeFeeCents: number;
   /** Paid money returned as account credit. */
   accountCreditAmountCents: number;
   /** A PAID booking's applied credit given back to the member's balance (#3809). */
@@ -326,37 +287,19 @@ export interface WorkPartyCorrectionFigures {
   refundAmountCents: number;
   /**
    * The method the change settles by (`resolveWorkPartySettlementMethod`);
-   * null on a Remove, which hands nothing back.
+   * null on a Remove, which hands nothing back, and on an Add whose whole
+   * reduction an unpaid ask took (`unpaidAskOffsetCents` with no method offered).
    */
   settlementMethod: BookingModificationSettlementMethod | null;
 }
 
-export const WORK_PARTY_OWN_MONEY_BACK_MESSAGE =
-  "This change would refund or credit money to you or your family, so another officer must add this booking to the work party.";
-
-/**
- * #129 decision 6 (owner, 16 Nov 2026): an officer may add their own or their
- * family's booking while nothing comes back (an unpaid booking with no account
- * credit applied: its price just drops); once the change would refund or
- * credit any money (`editTotalMoneyBackCents`), another officer
- * must. The money's recipient is the booking's owner, or for an organiser-paid
- * joiner the group organiser (the lane's reading, recorded on the issue).
- */
-export function workPartyOwnMoneyBackRefusal(
-  figures: WorkPartyCorrectionFigures,
-  recipientIsActorOrFamily: boolean,
-): string | null {
-  return recipientIsActorOrFamily && editTotalMoneyBackCents(figures) > 0
-    ? WORK_PARTY_OWN_MONEY_BACK_MESSAGE
-    : null;
-}
-
-export const WORK_PARTY_CORRECTION_FIGURES_CHANGED_MESSAGE =
-  "The booking changed since the figures were shown. Check the new figures and confirm again.";
-
 export class WorkPartyCorrectionFiguresChangedError extends Error {
-  readonly code = "FIGURES_CHANGED";
-  constructor(readonly actual: WorkPartyCorrectionFigures) {
+  readonly code = WORK_PARTY_FIGURES_CHANGED_CODE;
+  /** The fresh figures, and what may now be chosen for them (#5149 review M1). */
+  constructor(
+    readonly actual: WorkPartyCorrectionFigures,
+    readonly settlementOptions: WorkPartySettlementOptions,
+  ) {
     super(WORK_PARTY_CORRECTION_FIGURES_CHANGED_MESSAGE);
     this.name = "WorkPartyCorrectionFiguresChangedError";
   }
@@ -393,12 +336,15 @@ export type WorkPartyCorrectionMode =
 
 /**
  * Every money figure the officer sees, and how it settles; any that moved
- * refuses the save — a changed method too (#129), so a save is never refunded
- * where the officer was shown credit, or the reverse.
+ * refuses the save — a changed method too (triyder/AlpineClubBookingsNZ#129), so a save is never refunded
+ * where the officer was shown credit, or the reverse. A superset of the edit's
+ * own four (`editQuotedFiguresSchema`, `INV-MOD-062`), which the save also runs:
+ * `quotedFigures` below hands the edit the preview's price, difference and fee.
  */
 const FIGURE_KEYS = [
   "newFinalPriceCents",
   "priceDiffCents",
+  "changeFeeCents",
   "accountCreditAmountCents",
   "appliedCreditGivenBackCents",
   "refundedExcessCreditCents",
@@ -427,9 +373,10 @@ export type WorkPartyCorrectionParams = {
 export function addBookingToWorkParty(
   params: WorkPartyCorrectionParams & {
     /**
-     * The officer's choice (#129 decision 1); absent means the default — club
-     * credit, or the organiser's disposition. `card` is refused (409) unless
-     * `workPartySettlementOptions` offers it.
+     * The officer's choice (triyder/AlpineClubBookingsNZ#129 decision 1); absent means the default — club
+     * credit, or the organiser's disposition. `card` (a refund, to the card or
+     * by bank transfer) is refused (409) unless `workPartySettlementOptions`
+     * offers it.
      */
     settlementMethod?: BookingModificationSettlementMethod;
   },
@@ -438,9 +385,11 @@ export function addBookingToWorkParty(
 }
 
 /**
- * #130 (owner, 16 Nov 2026): Add with the work party's code left out. The
- * difference is owed like any price rise (paid: the ordinary additional ask,
- * `INV-ADDPAY`); credit given and refunds paid are left alone.
+ * fork triyder/AlpineClubBookingsNZ#130, kept by owner decision 2 of 18 Nov 2026 (maintainers' comment
+ * https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-6951626920):
+ * Add with the work party's code left out. The difference is owed like any
+ * price rise (paid: the ordinary additional ask, `INV-ADDPAY`); credit given
+ * and refunds paid are left alone.
  */
 export function removeBookingFromWorkParty(
   params: WorkPartyCorrectionParams,
@@ -450,6 +399,17 @@ export function removeBookingFromWorkParty(
 
 export const WORK_PARTY_REMOVAL_MONEY_BACK_MESSAGE =
   "Removing the work party would hand money back, so it can't be done here.";
+
+/** The edit's four quoted figures (`EditQuotedFigures`), from the work party's shown ones. */
+function workPartyQuotedFigures(shown: WorkPartyCorrectionFigures) {
+  return {
+    newFinalPriceCents: shown.newFinalPriceCents,
+    priceDiffCents: shown.priceDiffCents,
+    changeFeeCents: shown.changeFeeCents,
+    // Before the unpaid-ask offset, as the preview reports it (`EditQuotedFigures`).
+    netChargeCents: shown.priceDiffCents + shown.changeFeeCents,
+  };
+}
 
 async function correctWorkParty(
   direction: "add" | "remove",
@@ -478,28 +438,7 @@ async function correctWorkParty(
       // (3) The booking and the work party, fresh.
       const booking = await tx.booking.findUnique({
         where: { id: params.bookingId },
-        select: {
-          status: true,
-          checkIn: true,
-          checkOut: true,
-          lodgeId: true,
-          memberId: true,
-          finalPriceCents: true,
-          organiserSettled: true,
-          parentBookingId: true,
-          payment: {
-            select: { status: true, amountCents: true, creditAppliedCents: true, source: true },
-          },
-          promoRedemptions: {
-            select: {
-              id: true,
-              applicationOrder: true,
-              promoCode: {
-                select: { code: true, workPartyEvent: { select: { id: true } } },
-              },
-            },
-          },
-        },
+        select: WORK_PARTY_BOOKING_SELECT,
       });
       if (!booking) throw new ApiError("Booking not found", 404);
       const event = await tx.workPartyEvent.findUnique({
@@ -518,49 +457,38 @@ async function correctWorkParty(
       });
       if (!event) throw new ApiError("Work party not found", 404);
 
-      const redemptions = bookingPromoRedemptions(booking);
-      const ownerMemberId = bookingOwner(booking).memberId;
-      const quotePriced = await isQuotePricedBooking(tx, params.bookingId);
+      // The list's facts, re-read under the locks: owner decision 3 (the owner,
+      // and for an organiser-paid joiner the organiser, and their family rows
+      // as they stand now), a disputed card payment, a $0-settled booking.
+      const facts = await readWorkPartyBookingFacts(tx, params.bookingId, booking, params.actorMemberId);
       const today = dateOnlyInstantOf(params.todayAtClub);
       const eligibility =
         direction === "add"
           ? workPartyBookingEligibility(
-              {
-                status: booking.status,
-                checkIn: booking.checkIn,
-                checkOut: booking.checkOut,
-                hasWorkParty: redemptions.some((row) => row.promoCode?.workPartyEvent),
-                hasOtherPromoCode: redemptions.some((row) => row.promoCode && !row.promoCode.workPartyEvent),
-                quotePriced,
-                memberOwned: Boolean(ownerMemberId),
-              },
+              facts.add,
               { bookingLodgeId, today, multiPromoCodes: await multiPromoCodesEnabled(tx) },
               event,
             )
-          : workPartyRemovalEligibility(
-              {
-                status: booking.status,
-                checkOut: booking.checkOut,
-                quotePriced,
-                workPartyEventId:
-                  redemptions.find((row) => row.promoCode?.workPartyEvent)?.promoCode?.workPartyEvent?.id ?? null,
-              },
-              { today },
-              params.workPartyEventId,
-            );
+          : workPartyRemovalEligibility(facts.remove, { today }, params.workPartyEventId);
       if (!eligibility.ok) throw new ApiError(eligibility.reason, 409);
 
       // (4) The canonical edit, on THIS transaction. Add: the booking's codes in
       // their order, then the work party's (the promotion engine applies an
-      // internal code first regardless). Remove (#130): the booking's codes
-      // without the work party's. Its refusals throw and roll back. An Add's
-      // settlement is the officer's choice among those offered (#129); a
-      // refund it picks is the pipeline's own ordinary settlement. A Remove
-      // hands nothing back, so it carries no settlement method.
-      const settlementOptions = workPartySettlementOptions(booking);
-      const settlementMethod =
-        direction === "add" ? resolveWorkPartySettlementMethod(settlementOptions, params.settlementMethod) : null;
-      const keptCodes = redemptions.flatMap((row) =>
+      // internal code first regardless). Remove (fork triyder/AlpineClubBookingsNZ#130): the booking's
+      // codes without the work party's. Its refusals throw and roll back. An
+      // Add's settlement is the officer's choice among those the edit itself
+      // offers (checked on its answer below); a refund it picks is the
+      // pipeline's own ordinary settlement. An organiser-paid joiner's Add
+      // always runs with the organiser's one disposition. A Remove hands
+      // nothing back, so it carries no settlement method.
+      const organiserPaid = paidByOrganiser(booking);
+      const methodForEdit =
+        direction === "remove"
+          ? null
+          : organiserPaid
+            ? workPartyDefaultSettlementMethod(booking)
+            : params.settlementMethod ?? workPartyDefaultSettlementMethod(booking);
+      const keptCodes = bookingPromoRedemptions(booking).flatMap((row) =>
         row.promoCode && row.promoCode.code !== event.promoCode.code ? [{ code: row.promoCode.code }] : [],
       );
       const modified = await modifyBookingBatch({
@@ -568,8 +496,12 @@ async function correctWorkParty(
         actor: { id: params.actorMemberId, role: "ADMIN" },
         input: {
           promoCodes: direction === "add" ? [...keptCodes, { code: event.promoCode.code }] : keptCodes,
-          ...(settlementMethod === null ? {} : { settlementMethod }),
+          ...(methodForEdit === null ? {} : { settlementMethod: methodForEdit }),
           ...(params.notifyMember === undefined ? {} : { notifyMember: params.notifyMember }),
+          // The edit's own check that the save matches the preview (`INV-MOD-062`),
+          // at its own place before settlement (maintainers' comment D), built
+          // from the figures the officer was shown.
+          ...(params.dryRun ? {} : { quotedFigures: workPartyQuotedFigures(params.expectedFigures) }),
         },
         ipAddress: params.ipAddress,
         todayAtClub: params.todayAtClub,
@@ -608,10 +540,32 @@ async function correctWorkParty(
         );
       }
 
+      // What the ordinary edit offers for this payment shape, on its own answer
+      // (upstream owner decision, 15 Nov 2026): a method it does not offer is
+      // refused here, rolling the edit back. Otherwise it is `methodForEdit`.
+      // #5151 (`INV-PAY-154`): a dispute holds money this Add would hand back, on
+      // the edit's own answer, so the treasurer settles it by hand; asked before
+      // the method, which a hold leaves none of. An Add that hands nothing back
+      // (an unpaid ask took it) holds nothing and goes ahead (#5149 review A2).
+      if (direction === "add" && modified.refundHeldForDispute && editTotalMoneyBackCents(modified) > 0) {
+        throw new ApiError(WORK_PARTY_DISPUTED_PAYMENT_MESSAGE, 409);
+      }
+      // What an unpaid ask took of an Add's reduction, on the edit's own answer:
+      // all of it leaves no method to offer, as nothing comes back (B-L1 of the
+      // maintainers' second comment); part of it is named (review M4).
+      const settlementOptions = workPartySettlementOptions(
+        booking,
+        // #5212 (`INV-PAY-160`): where a refund goes is the answer the edit settled by, carried on its result.
+        { asksForMethod: modified.requiresSettlementMethod, refundsToCard: modified.reductionRefundsToCard },
+        direction === "add" ? workPartyAskOffset(modified) : undefined,
+      );
+      const settlementMethod =
+        direction === "add" ? resolveWorkPartySettlementMethod(settlementOptions, params.settlementMethod, params.format) : null;
       const figures: WorkPartyCorrectionFigures = {
         previousFinalPriceCents: booking.finalPriceCents,
         newFinalPriceCents: modified.booking.finalPriceCents,
         priceDiffCents: modified.priceDiffCents,
+        changeFeeCents: modified.changeFeeCents,
         accountCreditAmountCents: modified.accountCreditAmountCents,
         appliedCreditGivenBackCents: modified.appliedCreditGivenBackCents,
         refundedExcessCreditCents: modified.refundedExcessCreditCents,
@@ -621,14 +575,13 @@ async function correctWorkParty(
         settlementMethod,
       };
       if (direction === "remove") {
-        // #130: the money goes one way. Anything handed back is a path the
-        // plan missed; refuse rather than pay it. So the own/family rule (#129
-        // decision 6), which guards money coming back, has nothing to refuse.
+        // fork triyder/AlpineClubBookingsNZ#130: the money goes one way. Anything handed back is a path the
+        // plan missed; refuse rather than pay it.
         if (editTotalMoneyBackCents(figures) > 0) {
           throw new ApiError(WORK_PARTY_REMOVAL_MONEY_BACK_MESSAGE, 409);
         }
       } else {
-        // #129: a refund only where it was meant — the officer chose the card
+        // triyder/AlpineClubBookingsNZ#129: a refund only where it was meant — the officer chose the card
         // (`resolveWorkPartySettlementMethod` admits `card` only where offered),
         // or the organiser's money goes back to them. Any other refund is a path
         // the options missed; refuse rather than pay it.
@@ -636,30 +589,13 @@ async function correctWorkParty(
         if (figures.refundAmountCents > 0 && !refundExpected) {
           throw new ApiError("This booking's change would be refunded, not credited, so it can't be added here.", 409);
         }
-        // #129 decision 6, decided on the figures so the preview refuses too:
-        // who any money back goes to — the owner, or for an organiser-paid
-        // joiner the group organiser — and whether that is the officer or their
-        // family, from fresh family rows under the locks.
-        const recipientMemberId = settlementOptions.paidByOrganiser && booking.parentBookingId
-          ? bookingOwner(
-              await tx.booking.findUniqueOrThrow({
-                where: { id: booking.parentBookingId },
-                select: { memberId: true },
-              }),
-            ).memberId
-          : ownerMemberId;
-        const ownMoneyBack = workPartyOwnMoneyBackRefusal(
-          figures,
-          await actorIsMemberOrFamily(tx, recipientMemberId, params.actorMemberId),
-        );
-        if (ownMoneyBack) throw new ApiError(ownMoneyBack, 409);
       }
       if (params.dryRun) throw new WorkPartyCorrectionDryRun(figures, settlementOptions);
 
       // (6) Only what the officer was shown (#4030 C4). A throw rolls it all back.
       const expected = params.expectedFigures;
       if (FIGURE_KEYS.some((key) => expected[key] !== figures[key])) {
-        throw new WorkPartyCorrectionFiguresChangedError(figures);
+        throw new WorkPartyCorrectionFiguresChangedError(figures, settlementOptions);
       }
 
       deferredPostCommit = modified.deferredPostCommit ?? null;
@@ -669,14 +605,20 @@ async function correctWorkParty(
         settlementOptions,
         bookingModificationId: modified.bookingModificationId ?? null,
       };
-    })
-    .catch((error: unknown) => {
+    }, LOCK1_HOLDER_TRANSACTION_BUDGET)
+    .catch(async (error: unknown): Promise<WorkPartyCorrectionResult> => {
       if (error instanceof WorkPartyCorrectionDryRun) {
         return {
           outcome: "quoted" as const,
           figures: error.figures,
           settlementOptions: error.settlementOptions,
         };
+      }
+      // The edit's own check (`INV-MOD-062`) refused a save whose figures moved:
+      // answer as step (6) does, with the figures a fresh dry run now gives.
+      if (error instanceof EditPriceChangedError && !params.dryRun) {
+        const fresh = await correctWorkParty(direction, { ...params, dryRun: true, expectedFigures: undefined });
+        throw new WorkPartyCorrectionFiguresChangedError(fresh.figures, fresh.settlementOptions);
       }
       throw error;
     });

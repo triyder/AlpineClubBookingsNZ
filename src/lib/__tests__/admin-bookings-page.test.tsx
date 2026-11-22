@@ -127,6 +127,7 @@ const effectiveModulesOn = {
   maintenanceReports: true,
   alpineCentralServer: false,
   commsPortal: false,
+  mcpServer: false,
   memberLodgeRoster: false,
   foodOrders: false,
   multiPromoCodes: false,
@@ -695,7 +696,7 @@ describe("AdminBookingsPage", () => {
     });
     const html = renderToStaticMarkup(element);
 
-    expect(html).toContain("All Bookings");
+    expect(html).toContain(">Bookings</h1>");
     expect(html).toContain("Aroha Ngata");
     // The redesigned table (#1810) keeps a Payment column; the operational
     // Beds/Xero/Changes columns moved to the booking detail view.

@@ -49,11 +49,16 @@ change these pages.
 
 1. Open the **Club Identity** card (`/admin/appearance/identity`).
 2. Under **Club identity**, the fields open read-only. Click **Edit**, then
-   change the **Club name**, **Short name**, **Hut-leader label**, and
-   **Facebook URL**. These override the file configuration — leave a field
-   blank to fall back to the configured default. Click **Save club identity**
-   to save all four at once; changes appear across the site and in emails
-   within a few seconds. **Save club identity** stays greyed out until a value
+   change the **Club name**, **Short name**, **Hut-leader label**,
+   **Facebook URL**, **Legal name** and **Postal address**. These override the
+   file configuration — leave a field blank to fall back to the configured
+   default. Click **Save club identity** to save them all at once; changes
+   appear across the site and in emails within a few seconds. The **Legal
+   name** and **Postal address** are who a booking invoice is from when your
+   club does not use Xero (see [Paying for your
+   stay](../user-guide/paying-for-your-stay.md#download-your-invoice)): the
+   legal name falls back to the club name, and a blank address is left off.
+   Type the address one line per line. **Save club identity** stays greyed out until a value
    actually changes (extra spaces at either end don't count), and **Cancel**
    puts every field back to what was last saved without saving anything. If
    your role can view but not change club identity, a note at the top of the
@@ -70,19 +75,7 @@ change these pages.
    use — the same values the [Email Messages](email-messages.md) templates
    reference; a multi-lodge club sets them per lodge under **Setup → Lodges**
    ([Lodges](../multi-lodge/README.md)) instead.
-4. Also under **Lodge details**, and all optional, are the details the booking
-   invoice prints: a **Postal address** (beside **Address**; the invoice uses it
-   instead of the address when set), then, under **Door code**, **Bank details
-   for bookings** (an **Account name** and an **Account number** in four parts,
-   `BB-bbbb-AAAAAAA-SSS`, the suffix 2 or 3 digits) and a **GST
-   number**. They are
-   saved by the same **Save lodge details** button and appear only on the
-   invoice a booker or officer downloads from a booking that has no Xero
-   invoice — never on the public site or in emails. A multi-lodge club sets them
-   per lodge in the **Edit** form under **Setup → Lodges**
-   ([Lodges](lodges.md#edit-a-lodges-identity)); both screens edit the same
-   lodge record.
-5. Under **Where members' data is held**, click **Edit** and enter the
+4. Under **Where members' data is held**, click **Edit** and enter the
    **Hosting provider** (the company that runs your server and database) and
    **Where your data is held** (the country or region; name both if your
    database and backups are held in different places). Each is one line of
@@ -102,6 +95,8 @@ change these pages.
 | Short name | The abbreviated club name (e.g. "EMC") | Configured default | Blank falls back to the file config |
 | Hut-leader label | What the role is called throughout the app, in the singular (e.g. "Hut Leader") | Configured default | Renames the sidebar entry and member-facing wording. The app adds the plural itself ("Hut Leaders"), and leaves a label that already ends in "s" as typed |
 | Facebook URL | The club's Facebook link used in the footer/contact | Configured default | Full URL |
+| Legal name | Who a booking invoice is from, when the club's Xero module is off | The club name | Up to 200 characters. Not used while Xero is on: Xero's own invoice is the one offered |
+| Postal address | The address printed under the legal name on that invoice | Blank (no address printed) | Up to 500 characters, one line per line; blank lines and spaces at either end of a line are dropped |
 
 **Lodge details**
 
@@ -111,9 +106,6 @@ change these pages.
 | Address | Public lodge address (`{{lodge-address}}` token) | Blank | Appears on the contact page; while it is blank the contact page shows no address block and the token renders nothing |
 | Travel note | Extra travel/access note for visitors | Blank | Optional |
 | Door code | The lodge door/access code | Blank | Shared **only** in confirmation emails, never public |
-| Postal address | The issuer address on the booking invoice | Blank | Up to 300 characters; when blank the invoice uses the address |
-| Bank details for bookings | Account name and New Zealand account number in the invoice's payment box | Blank | Name up to 200 characters; the number is `BB-bbbb-AAAAAAA-SSS` (15 or 16 digits) or blank, and a part-filled number will not save; the box appears only when one is set |
-| GST number | "GST Number" on the booking invoice | Blank | Up to 40 characters; printed only when set |
 
 ## Troubleshooting
 

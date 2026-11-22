@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * Fork #118: the admin work-party routes keep the Events Calendar in step —
+ * #5148: the admin work-party routes keep the Events Calendar in step —
  * create syncs (the module decides inside the helper), edit regenerates a
  * linked work party, delete removes the entries first, and "Add to calendar"
  * links an existing one while the calendar module is on.
@@ -9,11 +9,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({
   modules: { eventsCalendar: true },
   syncCreated: vi.fn(async () => null as string | null),
-  syncUpdated: vi.fn(async () => null as string | null),
+  updateWithCalendar: vi.fn(),
   remove: vi.fn<(...args: unknown[]) => Promise<void>>(async () => undefined),
   replace: vi.fn(async () => 3),
   createWorkParty: vi.fn(),
-  updateWorkParty: vi.fn(),
   prisma: {
     lodge: { findUnique: vi.fn() },
     workPartyEvent: { findUnique: vi.fn(), findMany: vi.fn(), delete: vi.fn() },
@@ -41,7 +40,7 @@ vi.mock("@/lib/module-settings", () => ({
 vi.mock("@/lib/work-party-calendar", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/work-party-calendar")),
   syncCreatedWorkPartyCalendar: h.syncCreated,
-  syncUpdatedWorkPartyCalendar: h.syncUpdated,
+  updateWorkPartyWithCalendar: h.updateWithCalendar,
   addWorkPartyToCalendar: h.replace,
 }));
 vi.mock("@/lib/calendar-work-party-entries", () => ({
@@ -50,7 +49,6 @@ vi.mock("@/lib/calendar-work-party-entries", () => ({
 vi.mock("@/lib/work-party", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/work-party")),
   createWorkPartyEventWithPromo: h.createWorkParty,
-  updateWorkPartyEventAndPromo: h.updateWorkParty,
 }));
 
 import { GET as listRoute, POST as createRoute } from "../route";
@@ -92,7 +90,7 @@ beforeEach(() => {
   h.modules.eventsCalendar = true;
   h.prisma.lodge.findUnique.mockResolvedValue({ active: true, name: "Main Lodge" });
   h.createWorkParty.mockResolvedValue(saved);
-  h.updateWorkParty.mockResolvedValue(saved);
+  h.updateWithCalendar.mockResolvedValue(saved);
   h.prisma.workPartyEvent.findUnique.mockResolvedValue({
     ...saved,
     lodge: { name: "Main Lodge" },
@@ -114,16 +112,96 @@ describe("create", () => {
 });
 
 describe("edit", () => {
-  it("syncs the updated work party", async () => {
+  it("saves the work party and its calendar entries together", async () => {
     const res = await updateRoute(json("PUT", body), { params });
     expect(res.status).toBe(200);
-    expect(h.syncUpdated).toHaveBeenCalledWith("wp-1", "admin-1");
+    expect(h.updateWithCalendar).toHaveBeenCalledWith(
+      "wp-1",
+      expect.objectContaining({ name: "Spring", discountPercent: 50 }),
+      "admin-1",
+    );
+    // The edit and its entries save in one transaction, so there is no
+    // separate warning to report.
+    expect(await res.json()).not.toHaveProperty("calendarWarning");
   });
 
   it("deactivating is an ordinary edit for the calendar (its entries stay, hidden)", async () => {
     await updateRoute(json("PUT", { ...body, active: false }), { params });
-    expect(h.syncUpdated).toHaveBeenCalledWith("wp-1", "admin-1");
+    expect(h.updateWithCalendar).toHaveBeenCalledWith(
+      "wp-1",
+      expect.objectContaining({ active: false }),
+      "admin-1",
+    );
     expect(h.remove).not.toHaveBeenCalled();
+  });
+
+  it("refuses a window longer than the calendar series limit", async () => {
+    const res = await updateRoute(
+      json("PUT", { ...body, startDate: "2026-07-10", endDate: "2027-07-11" }),
+      { params },
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe(
+      "A work party can run for at most 366 nights",
+    );
+    expect(h.updateWithCalendar).not.toHaveBeenCalled();
+  });
+
+  it("accepts a window of exactly 366 nights", async () => {
+    const res = await updateRoute(
+      json("PUT", { ...body, startDate: "2026-07-10", endDate: "2027-07-10" }),
+      { params },
+    );
+    expect(res.status).toBe(200);
+  });
+
+  describe("a work party saved longer than the cap before it existed (400 nights)", () => {
+    const long = { startDate: "2026-07-10", endDate: "2027-08-13" };
+    beforeEach(() => {
+      h.prisma.workPartyEvent.findUnique.mockResolvedValue({
+        ...saved,
+        startDate: new Date("2026-07-10T00:00:00.000Z"),
+        endDate: new Date("2027-08-13T00:00:00.000Z"),
+      });
+    });
+
+    it("can still be deactivated with its dates as they are", async () => {
+      const res = await updateRoute(json("PUT", { ...body, ...long, active: false }), { params });
+      expect(res.status).toBe(200);
+      expect(h.updateWithCalendar).toHaveBeenCalledWith(
+        "wp-1",
+        expect.objectContaining({ active: false }),
+        "admin-1",
+      );
+    });
+
+    it("can still have its description edited", async () => {
+      const res = await updateRoute(
+        json("PUT", { ...body, ...long, description: "Bring a hammer" }),
+        { params },
+      );
+      expect(res.status).toBe(200);
+    });
+
+    it("is refused when its dates are changed and still exceed the cap", async () => {
+      const res = await updateRoute(
+        json("PUT", { ...body, startDate: "2026-07-10", endDate: "2027-08-14" }),
+        { params },
+      );
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe("A work party can run for at most 366 nights");
+      expect(h.updateWithCalendar).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe("create over the night cap", () => {
+  it("refuses a new work party longer than 366 nights", async () => {
+    const res = await createRoute(
+      json("POST", { ...body, startDate: "2026-07-10", endDate: "2027-07-11" }),
+    );
+    expect(res.status).toBe(400);
+    expect(h.createWorkParty).not.toHaveBeenCalled();
   });
 });
 

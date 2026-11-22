@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { fetchWithRecentAuth } from "@/components/confirm-its-you";
 import {
   Dialog,
   DialogContent,
@@ -26,15 +26,22 @@ import { ViewOnlyActionButton } from "@/components/admin/view-only-action";
 import { useAdminAreaEditAccess } from "@/hooks/use-admin-area-edit-access";
 import { useClubFormat } from "@/components/club-format-provider";
 import { formatCents } from "@/lib/pricing";
-import { editTotalMoneyBackCents } from "@/lib/edit-money-back";
+import {
+  workPartyAskAbsorbedSentence,
+  workPartyAskPartlyAbsorbedSentence,
+  workPartyCreditBackCents,
+} from "@/lib/edit-money-back";
 import { unverifiedWriteMessage } from "@/lib/unverified-write-copy";
+import { apiErrorCodeFromBody, apiErrorMessageFromBody } from "@/lib/api-error-message";
+import {
+  WORK_PARTY_CORRECTION_FIGURES_CHANGED_MESSAGE,
+  WORK_PARTY_FIGURES_CHANGED_CODE,
+} from "@/lib/work-party-figures-changed";
 import { OptionCard, OptionCardGroup } from "@/components/ui/option-card";
 import { BookingWorkPartyRemoveControls } from "@/components/admin/booking-work-party-remove-controls";
 import type { BookingModificationSettlementMethod } from "@/lib/booking-modify-validation";
-import type {
-  WorkPartyCorrectionFigures,
-  WorkPartySettlementOptions,
-} from "@/lib/work-party-booking-correction";
+import type { WorkPartyCorrectionFigures } from "@/lib/work-party-booking-correction";
+import type { WorkPartySettlementOptions } from "@/lib/work-party-settlement-options";
 
 type WorkPartyOption = {
   id: string;
@@ -48,16 +55,17 @@ type WorkPartyOption = {
 };
 
 /**
- * "Add booking to work party" (fork #119), on the admin tools card of a
+ * "Add booking to work party" (fork triyder/AlpineClubBookingsNZ#119), on the admin tools card of a
  * booking. For a member who forgot to tick "I am attending a working bee": the
  * officer picks the work party, sees what the booking will cost and how much
- * comes back (a dry run of the real change), and confirms. On a booking paid
- * by card the officer chooses club credit or a refund to the card (#129); the
- * choice re-runs the dry run. An organiser-paid joiner's money goes back to
+ * comes back (a dry run of the real change), and confirms. On a paid booking
+ * the officer chooses club credit or a refund, as on an ordinary edit: to the
+ * card, or by bank transfer for Internet Banking (triyder/AlpineClubBookingsNZ#129, upstream owner
+ * decision 15 Nov 2026); the choice re-runs the dry run. An organiser-paid joiner's money goes back to
  * the organiser. The figures shown are the figures saved — the route refuses
  * if they, or the choice, moved.
  * Bookings edit; a bookings-view admin sees the button disabled. A booking
- * already on a work party is offered "Remove from work party" instead (#130).
+ * already on a work party is offered "Remove from work party" instead (fork triyder/AlpineClubBookingsNZ#130).
  */
 export function BookingWorkPartyControls({
   bookingId,
@@ -115,7 +123,7 @@ function BookingWorkPartyAddControls({
       const res = await fetch(`/api/admin/bookings/${bookingId}/work-party`);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error || "Could not load the work parties for this booking.");
+        setError(apiErrorMessageFromBody(data, "Could not load the work parties for this booking."));
         return;
       }
       setOptions(data.workParties ?? []);
@@ -161,13 +169,17 @@ function BookingWorkPartyAddControls({
         ),
       });
       const data = await res.json().catch(() => ({}));
-      if (res.status === 409 && data.code === "FIGURES_CHANGED") {
+      if (res.status === 409 && apiErrorCodeFromBody(data) === WORK_PARTY_FIGURES_CHANGED_CODE) {
+        // The choice may have changed with the figures (#5149 review M1).
         setFigures(data.figures);
-        setError(data.error);
+        setSettlementOptions(data.settlementOptions ?? null);
+        setError(apiErrorMessageFromBody(data, WORK_PARTY_CORRECTION_FIGURES_CHANGED_MESSAGE));
         return;
       }
       if (!res.ok) {
-        setError(data.error || "The booking could not be added to the work party.");
+        // A refusal leaves nothing the officer saw valid to confirm: drop the old figures.
+        setFigures(null);
+        setError(apiErrorMessageFromBody(data, "The booking could not be added to the work party."));
         return;
       }
       if (mode === "preview") {
@@ -227,9 +239,9 @@ function BookingWorkPartyAddControls({
               For a member who forgot to tick &ldquo;I am attending a working
               bee&rdquo;. The booking is repriced with the work party&apos;s
               discount, and anything already paid above the new total goes back
-              as account credit or, on a booking paid by card, a refund to the
-              card if you choose. A group organiser&apos;s payment goes back to
-              the organiser.
+              as account credit or, if you choose, as a refund the way it was
+              paid: to the card, or by bank transfer. A group organiser&apos;s
+              payment goes back to the organiser.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 text-sm">
@@ -247,6 +259,7 @@ function BookingWorkPartyAddControls({
                 <Label htmlFor={`work-party-${bookingId}`}>Work party</Label>
                 <Select
                   value={selectedId}
+                  disabled={busy}
                   onValueChange={(value) => {
                     setSelectedId(value);
                     setFigures(null);
@@ -297,7 +310,16 @@ function BookingWorkPartyAddControls({
                 data-testid="work-party-figures"
                 aria-live="polite"
               >
+                <p>
+                  New total: <strong>{money(figures.newFinalPriceCents)}</strong>{" "}
+                  (was {money(figures.previousFinalPriceCents)})
+                </p>
                 <WorkPartyMoneyBackLines figures={figures} options={settlementOptions} money={money} />
+                {figures.additionalAmountCents > 0 && (
+                  <p>
+                    Still to pay: <strong>{money(figures.additionalAmountCents)}</strong>
+                  </p>
+                )}
                 {noEmails && <BookingNoEmailsNotice />}
               </div>
             )}
@@ -346,10 +368,11 @@ function BookingWorkPartyAddControls({
 }
 
 /**
- * How the discount comes back: the organiser's one disposition for an
- * organiser-paid joiner (#129 decision 5), otherwise club credit or a refund to
- * the card where the booking offers both. Split out of the dialog, past 300
- * lines.
+ * How the discount comes back (triyder/AlpineClubBookingsNZ#129): a plain line for an organiser-paid
+ * joiner, whose money has the organiser's one disposition (triyder/AlpineClubBookingsNZ#129 decision 5);
+ * otherwise a choice only where there is one, as on an ordinary edit — club
+ * credit or a refund, named for where it goes (the card, or a bank transfer
+ * for Internet Banking; upstream owner decision, 15 Nov 2026).
  */
 function WorkPartySettlementChoice({
   options,
@@ -371,8 +394,8 @@ function WorkPartySettlementChoice({
       </p>
     );
   }
-  // A choice only where there is one.
-  if (options.methods.length <= 1) return null;
+  if (options.methods.length < 2) return null;
+  const refundsByBank = options.refundTo === "bank";
   return (
     <OptionCardGroup label="How the discount comes back">
       <OptionCard
@@ -384,18 +407,20 @@ function WorkPartySettlementChoice({
         Held on the member&apos;s account for a later booking.
       </OptionCard>
       <OptionCard
-        title="Refund to card"
+        title={refundsByBank ? "Refund to bank account" : "Refund to card"}
         selected={chosenMethod === "card"}
         onSelect={() => onChoose("card")}
         disabled={busy}
       >
-        Back to the card the booking was paid with.
+        {refundsByBank
+          ? "Paid by Internet Banking, so the club sends it back by bank transfer."
+          : "Back to the card the booking was paid with."}
       </OptionCard>
     </OptionCardGroup>
   );
 }
 
-/** The dry run's figures: the new total and every cent that comes back or is still owed. */
+/** The money coming back, in the figures: a refund, and every cent of credit. */
 function WorkPartyMoneyBackLines({
   figures,
   options,
@@ -405,35 +430,33 @@ function WorkPartyMoneyBackLines({
   options: WorkPartySettlementOptions | null;
   money: (cents: number) => string;
 }) {
-  // Every cent coming back as credit: all the money back (the one sum,
-  // `editTotalMoneyBackCents`) less what is refunded to the card (#129, #132).
-  const creditBackCents = editTotalMoneyBackCents(figures) - figures.refundAmountCents;
+  // An unpaid ask took the whole reduction (#5149 B-L1): nothing comes back.
+  const askOffsetCents = options?.unpaidAskOffsetCents ?? 0;
+  if (askOffsetCents > 0 && options?.methods.length === 0) {
+    return <p data-testid="work-party-ask-absorbed">{workPartyAskAbsorbedSentence(money(askOffsetCents))}</p>;
+  }
+  // Every cent coming back as credit: paid money credited, a paid booking's
+  // applied credit given back, and an unpaid one's applied credit freed (triyder/AlpineClubBookingsNZ#129).
+  const creditBackCents = workPartyCreditBackCents(figures);
   return (
     <>
-      <p>
-        New total: <strong>{money(figures.newFinalPriceCents)}</strong>{" "}
-        (was {money(figures.previousFinalPriceCents)})
-      </p>
       {figures.refundAmountCents > 0 && (
         <p>
           {options?.paidByOrganiser
             ? "Returned to the group organiser: "
-            : "Refunded to card: "}
+            : options?.refundTo === "bank"
+              ? "To be refunded by bank transfer: "
+              : "Refunded to card: "}
           <strong>{money(figures.refundAmountCents)}</strong>
         </p>
       )}
       {(figures.refundAmountCents === 0 || creditBackCents > 0) && (
         <p>
-          Account credit to the member:{" "}
-          <strong>
-            {money(creditBackCents)}
-          </strong>
+          Account credit to the member: <strong>{money(creditBackCents)}</strong>
         </p>
       )}
-      {figures.additionalAmountCents > 0 && (
-        <p>
-          Still to pay: <strong>{money(figures.additionalAmountCents)}</strong>
-        </p>
+      {askOffsetCents > 0 && (
+        <p data-testid="work-party-ask-partly-absorbed">{workPartyAskPartlyAbsorbedSentence(money(askOffsetCents))}</p>
       )}
     </>
   );

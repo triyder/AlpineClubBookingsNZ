@@ -162,8 +162,12 @@ export const NON_WEBSITE_ROOT_SEGMENTS: ReadonlySet<string> = new Set([
   "book",
   "bookings",
   "calendar",
+  // ALP-653: `/connect/authorize`, where a signed-in member approves an AI
+  // app. An `(authenticated)` route like dashboard — no session exists
+  // pre-setup, so it redirects to login — and module-gated, off by default.
+  "connect",
   "dashboard",
-  // Fork #121: the member Order food page and the food-order history. Like
+  // Fork triyder/AlpineClubBookingsNZ#121: the member Order food page and the food-order history. Like
   // dashboard/induction, `(authenticated)` routes with no session pre-setup,
   // and additionally module-gated (foodOrders, off by default).
   "food-order",
@@ -186,9 +190,6 @@ export const NON_WEBSITE_ROOT_SEGMENTS: ReadonlySet<string> = new Set([
   "nominations",
   "notices",
   "profile",
-  // Fork #118: the member work party page. An `(authenticated)` route like
-  // dashboard/notices, members only and gated by the workParties module.
-  "work-parties",
   // (public) — login and the token flows an operator may need mid-setup.
   //
   // NOT every token flow in the product, and since #2818 that is worth saying
@@ -220,6 +221,11 @@ export const NON_WEBSITE_ROOT_SEGMENTS: ReadonlySet<string> = new Set([
   // (lodge)
   "lodge",
   // app root, outside every group
+  //
+  // ALP-653: the OAuth discovery documents an AI app reads. JSON for a
+  // machine, module-gated and off by default; a holding-screen document is
+  // never the answer to one.
+  ".well-known",
   "api",
   "display",
   // The terminal 404 asset-shaped misses are rewritten to (#2404). Not a

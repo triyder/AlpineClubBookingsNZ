@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * Fork #119: `/api/admin/bookings/[id]/work-party` — the access matrix (view
+ * Fork triyder/AlpineClubBookingsNZ#119: `/api/admin/bookings/[id]/work-party` — the access matrix (view
  * to list, edit to preview or apply), the request shape, and how the service's
  * outcomes reach the officer. The money itself is proved in
  * `work-party-booking-correction.realdb.test.ts`.
@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   addBookingToWorkParty: vi.fn(),
   removeBookingFromWorkParty: vi.fn(),
   bookingFindUnique: vi.fn(),
+  familyFindMany: vi.fn(async () => [] as Array<{ memberId: string; familyGroupId: string }>),
   findActiveWorkParties: vi.fn(),
   modules: { workParties: true },
 }));
@@ -28,6 +29,9 @@ vi.mock("@/lib/session-guards", () => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: { findUnique: h.bookingFindUnique },
+    familyGroupMember: { findMany: h.familyFindMany },
+    // No ledger row took money, unless a case says otherwise (`workPartyPaidWithNoMoneyTaken`).
+    paymentTransaction: { count: vi.fn(async () => 0) },
   },
 }));
 vi.mock("@/lib/lodges", () => ({ getDefaultLodgeId: vi.fn(async () => "lodge-1") }));
@@ -60,7 +64,11 @@ vi.mock("@/lib/work-party-booking-correction", async (importOriginal) => ({
 }));
 
 import { ApiError } from "@/lib/api-error";
-import { WorkPartyCorrectionFiguresChangedError } from "@/lib/work-party-booking-correction";
+import {
+  WORK_PARTY_OWN_BOOKING_MESSAGE,
+  WORK_PARTY_PAID_WITH_NO_MONEY_MESSAGE,
+  WorkPartyCorrectionFiguresChangedError,
+} from "@/lib/work-party-booking-correction";
 import { GET, POST } from "../route";
 
 const params = Promise.resolve({ id: "booking-1" });
@@ -68,6 +76,7 @@ const figures = {
   previousFinalPriceCents: 30_000,
   newFinalPriceCents: 25_000,
   priceDiffCents: -5_000,
+  changeFeeCents: 0,
   accountCreditAmountCents: 5_000,
   appliedCreditGivenBackCents: 0,
   refundedExcessCreditCents: 0,
@@ -152,7 +161,9 @@ describe("POST", () => {
   });
 
   it("returns the new figures when they moved", async () => {
-    h.addBookingToWorkParty.mockRejectedValue(new WorkPartyCorrectionFiguresChangedError(figures));
+    h.addBookingToWorkParty.mockRejectedValue(
+      new WorkPartyCorrectionFiguresChangedError(figures, { methods: ["credit", "card"], paidByOrganiser: false, refundTo: "card" }),
+    );
     const res = await post({ mode: "apply", workPartyEventId: "wp-1", expectedFigures: figures });
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ code: "FIGURES_CHANGED", figures });
@@ -180,7 +191,7 @@ describe("POST", () => {
   });
 });
 
-describe("POST settlement method (#129)", () => {
+describe("POST settlement method (triyder/AlpineClubBookingsNZ#129)", () => {
   const settlementOptions = { methods: ["credit", "card"], paidByOrganiser: false };
 
   it("returns the methods offered with the preview", async () => {
@@ -222,12 +233,13 @@ describe("POST settlement method (#129)", () => {
   });
 });
 
-describe("POST action remove (#130)", () => {
+describe("POST action remove (fork triyder/AlpineClubBookingsNZ#130)", () => {
   const removal = {
     ...figures,
     previousFinalPriceCents: 25_000,
     newFinalPriceCents: 30_000,
     priceDiffCents: 5_000,
+    changeFeeCents: 0,
     accountCreditAmountCents: 0,
     additionalAmountCents: 5_000,
     billedToOrganiserCents: 0,
@@ -292,11 +304,39 @@ describe("GET", () => {
     },
   ];
 
-  it("lists the officer's own booking like any other: the money-back rule is the preview's (#129 decision 6)", async () => {
+  it("owner decision 3: greys out the signed-in officer's own booking with the reason, and its Remove", async () => {
     h.bookingFindUnique.mockResolvedValue(ownBooking("officer-1"));
     h.findActiveWorkParties.mockResolvedValue(oneWorkParty);
     const body = await (await GET(new Request("http://localhost/x") as never, { params })).json();
-    expect(body.workParties[0]).toMatchObject({ eligible: true, reason: null });
+    expect(body.workParties[0]).toMatchObject({ eligible: false, reason: WORK_PARTY_OWN_BOOKING_MESSAGE });
+
+    h.bookingFindUnique.mockResolvedValue({
+      ...ownBooking("officer-1"),
+      promoRedemptions: [
+        { id: "r-1", applicationOrder: 0, promoCode: { workPartyEvent: { id: "wp-1", name: "Here" } } },
+      ],
+    });
+    const removal = await (await GET(new Request("http://localhost/x") as never, { params })).json();
+    expect(removal.removal).toEqual({ eligible: false, reason: WORK_PARTY_OWN_BOOKING_MESSAGE });
+  });
+
+  it("owner decision 3: greys out a family member's booking, read for the signed-in officer", async () => {
+    h.bookingFindUnique.mockResolvedValue(ownBooking("member-1"));
+    h.familyFindMany.mockImplementation(async (args?: unknown) => {
+      const where = (args as { where: { memberId?: string; familyGroupId?: { in: string[] } } }).where;
+      const links = [
+        { memberId: "member-1", familyGroupId: "fam-1" },
+        { memberId: "officer-1", familyGroupId: "fam-1" },
+      ];
+      return links.filter((row) =>
+        where.memberId !== undefined ? row.memberId === where.memberId : where.familyGroupId!.in.includes(row.familyGroupId),
+      );
+    });
+    h.findActiveWorkParties.mockResolvedValue(oneWorkParty);
+    const body = await (await GET(new Request("http://localhost/x") as never, { params })).json();
+    expect(body.workParties[0]).toMatchObject({ eligible: false, reason: WORK_PARTY_OWN_BOOKING_MESSAGE });
+    h.familyFindMany.mockReset();
+    h.familyFindMany.mockResolvedValue([]);
   });
 
   it("lists overlapping open work parties with the eligibility answer", async () => {
@@ -343,7 +383,7 @@ describe("GET", () => {
     expect(JSON.stringify(body)).not.toMatch(/WORKPARTY-/);
   });
 
-  it("#130: says whether the work party on the booking can be removed", async () => {
+  it("fork triyder/AlpineClubBookingsNZ#130: says whether the work party on the booking can be removed", async () => {
     h.bookingFindUnique.mockResolvedValue({
       ...ownBooking("member-1"),
       promoRedemptions: [
@@ -360,6 +400,24 @@ describe("GET", () => {
     ] });
     const refused = await (await GET(new Request("http://localhost/x") as never, { params })).json();
     expect(refused.removal).toMatchObject({ eligible: false, reason: expect.stringMatching(/current status/) });
+  });
+
+  it("#5149 owner decision 20 Nov: the list refuses Remove on a booking paid by account credit alone", async () => {
+    const onWorkParty = [{ id: "r-1", applicationOrder: 0, promoCode: { workPartyEvent: { id: "wp-1", name: "Here" } } }];
+    const creditOnly = { id: "p-1", status: "SUCCEEDED", amountCents: 0, creditAppliedCents: 10_000, source: "STRIPE" };
+    h.bookingFindUnique.mockResolvedValue({ ...ownBooking("member-1"), promoRedemptions: onWorkParty, payment: creditOnly });
+    h.findActiveWorkParties.mockResolvedValue(oneWorkParty);
+    const body = await (await GET(new Request("http://localhost/x") as never, { params })).json();
+    expect(body.removal).toEqual({ eligible: false, reason: WORK_PARTY_PAID_WITH_NO_MONEY_MESSAGE });
+
+    // Money on the payment (an organiser-paid joiner's share, or a card capture): allowed.
+    h.bookingFindUnique.mockResolvedValue({
+      ...ownBooking("member-1"),
+      promoRedemptions: onWorkParty,
+      payment: { ...creditOnly, amountCents: 5_000 },
+    });
+    const allowed = await (await GET(new Request("http://localhost/x") as never, { params })).json();
+    expect(allowed.removal).toEqual({ eligible: true, reason: null });
   });
 
   it("404s an unknown booking", async () => {

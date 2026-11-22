@@ -1,6 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { WORK_PARTY_JOIN_PARAM } from "@/lib/work-party-rules";
+
+/** The work party a "Join Work Party" link names (`bookJoinWorkPartyHref`), or null. */
+export function readWorkPartyJoinId(
+  searchParams: Pick<URLSearchParams, "get"> | null,
+): string | null {
+  return searchParams?.get(WORK_PARTY_JOIN_PARAM)?.trim() || null;
+}
 
 /** What `GET /api/work-parties/[id]` returns that the prefill needs. */
 type WorkPartyPrefill = {
@@ -18,7 +26,7 @@ export const WORK_PARTY_PREFILL_LODGE_NOTICE =
   "You can't book the lodge that work party is held at, so nothing was filled in.";
 
 /**
- * "Join Work Party" (fork #118): `/book?workParty=<id>` opens the booking page
+ * "Join Work Party" (#5148): `/book?workParty=<id>` opens the booking page
  * with the work party's stay, its lodge and the working-bee option filled in.
  *
  * The work party id is the ONLY input — the dates come from the server
@@ -37,8 +45,9 @@ export const WORK_PARTY_PREFILL_LODGE_NOTICE =
  *    to load decides nothing; the wizard's own "Try again" reloads it.
  * 3. Once that lodge is the settled scope, the wizard is on the dates step and
  *    the subscription check has answered, select the stay — unless bookings
- *    are blocked (an unpaid subscription), where the dates step's own message
- *    stands and nothing is filled in.
+ *    are blocked (an unpaid subscription under the HARD_BLOCK lockout mode,
+ *    #4941), where the dates step's own message stands and nothing is filled
+ *    in.
  *
  * A member who has already picked dates or moved past the dates step before
  * the work party arrives keeps their own choice: the prefill is dropped.
@@ -66,7 +75,7 @@ export function useWorkPartyPrefill({
   onDatesStep: boolean;
   /** The member has picked dates or left the dates step. */
   memberStarted: boolean;
-  /** Bookings are blocked (unpaid subscription); null while still checking. */
+  /** Bookings are blocked (unpaid subscription under HARD_BLOCK, #4941); null while still checking. */
   bookingBlocked: boolean | null;
   selectLodge: (lodgeId: string) => void;
   selectDates: (checkIn: string, checkOut: string) => void;
@@ -166,61 +175,4 @@ export function useWorkPartyPrefill({
     workPartyPrefillName: prefill?.name ?? null,
     takePendingWorkPartySelection: takePendingSelection,
   };
-}
-
-/**
- * The booking wizard's hook-up to the prefill. It is kept here, not in
- * `use-booking-wizard.ts`, because that file is past upstream's hard size
- * ceiling (#4926). It derives the prefill's inputs from the wizard's own state,
- * and it ticks the joined work party through the wizard's setters.
- *
- * The wizard calls it after every existing effect, so their order is unchanged.
- */
-export function useWizardWorkPartyPrefill(wizard: {
-  searchParams: { get(name: string): string | null } | null;
-  lodges: ReadonlyArray<{ id: string }>;
-  lodgesLoading: boolean;
-  lodgesFailed: boolean;
-  lodgesForbidden: boolean;
-  lodgeId: string | null;
-  scopedLodgeId: string | null;
-  step: string;
-  checkIn: string | null;
-  subscriptionLoading: boolean;
-  bookingBlockedBySubscription: boolean;
-  handleLodgeChange: (lodgeId: string) => void;
-  handleDateSelect: (checkIn: string, checkOut: string) => Promise<void>;
-  setSelectedWorkPartyEventId: (id: string) => void;
-  setAttendingWorkParty: (attending: boolean) => void;
-}) {
-  const prefill = useWorkPartyPrefill({
-    workPartyId: wizard.searchParams?.get("workParty")?.trim() || null,
-    lodgeIds: wizard.lodges.map((lodge) => lodge.id),
-    lodgesSettled: !wizard.lodgesLoading && !wizard.lodgesFailed && !wizard.lodgesForbidden,
-    lodgeId: wizard.lodgeId,
-    scopedLodgeId: wizard.scopedLodgeId,
-    onDatesStep: wizard.step === "dates",
-    memberStarted: wizard.checkIn !== null || wizard.step !== "dates",
-    bookingBlocked: wizard.subscriptionLoading ? null : wizard.bookingBlockedBySubscription,
-    selectLodge: wizard.handleLodgeChange,
-    selectDates: (ci, co) => void wizard.handleDateSelect(ci, co),
-  });
-
-  /**
-   * When the review step's working bees arrive, tick the work party a Join came
-   * from, once, unless the member has already chosen one. Returns true when it
-   * ticked. It is read when the response lands, after render.
-   */
-  function tickJoinedWorkParty(
-    events: ReadonlyArray<{ id: string }>,
-    selectedWorkPartyEventId: string | null,
-  ): boolean {
-    const joined = prefill.takePendingWorkPartySelection(events);
-    if (!joined || selectedWorkPartyEventId) return false;
-    wizard.setSelectedWorkPartyEventId(joined);
-    wizard.setAttendingWorkParty(true);
-    return true;
-  }
-
-  return { workPartyPrefillNotice: prefill.workPartyPrefillNotice, tickJoinedWorkParty };
 }

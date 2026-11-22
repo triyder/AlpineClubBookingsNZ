@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import { requireAdmin } from "@/lib/session-guards";
 import { requireRecentAuth } from "@/lib/require-recent-auth";
 import { prisma } from "@/lib/prisma";
@@ -11,11 +12,9 @@ import { calendarDateOfDateOnlyInstant } from "@/lib/club-time";
 import { getDefaultLodgeId } from "@/lib/lodges";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { clubTodayDateOnlyInstant } from "@/lib/club-time/server";
-import { isQuotePricedBooking } from "@/lib/booking-modify-quote-priced";
 import { multiPromoCodesEnabled } from "@/lib/promo-redemption-slot";
 import { findActiveWorkPartyEventsForRange } from "@/lib/work-party";
-import { bookingPromoRedemptions } from "@/lib/booking-promo-redemptions";
-import { bookingOwner } from "@/lib/booking-owner";
+import { readWorkPartyBookingFacts, WORK_PARTY_BOOKING_SELECT } from "@/lib/work-party-booking-facts";
 import { prepareBatchModificationForCallerTransaction } from "@/lib/booking-batch-modification-service";
 import { EditFinancialReviewPendingError } from "@/lib/edit-financial-review";
 import { getXeroLockGuardErrorResponse } from "@/lib/xero-period-lock-guard";
@@ -29,7 +28,7 @@ import {
 import { workPartyCorrectionBodySchema as bodySchema } from "@/lib/work-party-correction-request";
 
 /**
- * The work parties this booking could be added to (fork #119): every open work
+ * The work parties this booking could be added to (fork triyder/AlpineClubBookingsNZ#119): every open work
  * party whose window overlaps the stay, each with the shared eligibility rule's
  * answer, so the admin booking page lists them with the reason a refused one
  * cannot be chosen. Booking Officers and Full Admins (`bookings:view`).
@@ -47,68 +46,32 @@ export async function GET(
   }
   const { id } = await params;
 
-  const booking = await prisma.booking.findUnique({
-    where: { id },
-    select: {
-      status: true,
-      checkIn: true,
-      checkOut: true,
-      lodgeId: true,
-      memberId: true,
-      promoRedemptions: {
-        select: {
-          id: true,
-          applicationOrder: true,
-          promoCode: {
-            select: { workPartyEvent: { select: { id: true, name: true } } },
-          },
-        },
-      },
-    },
-  });
+  const booking = await prisma.booking.findUnique({ where: { id }, select: WORK_PARTY_BOOKING_SELECT });
   if (!booking) {
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
-  const redemptions = bookingPromoRedemptions(booking);
-  const current =
-    redemptions.find((row) => row.promoCode?.workPartyEvent)?.promoCode?.workPartyEvent ?? null;
-  const ownerMemberId = bookingOwner(booking).memberId;
-  // #129 decision 6: an officer's own or family's booking is listed like any
-  // other; whether money would come back to them is decided on the preview's
-  // figures, under the service's locks.
-  const [bookingLodgeId, today, quotePriced, multiPromoCodes, events] = await Promise.all([
+  // The service's own facts, for this officer: their own or family's booking
+  // (owner decision 3, #5149) is greyed out with its reason, as the service
+  // refuses it again under its locks.
+  const [facts, bookingLodgeId, today, multiPromoCodes, events] = await Promise.all([
+    readWorkPartyBookingFacts(prisma, id, booking, guard.session.user.id),
     booking.lodgeId ?? getDefaultLodgeId(prisma),
     clubTodayDateOnlyInstant(),
-    isQuotePricedBooking(prisma, id),
     multiPromoCodesEnabled(prisma),
     // Every lodge's, so one at another lodge is listed with its reason.
     findActiveWorkPartyEventsForRange(booking.checkIn, booking.checkOut, prisma),
   ]);
-  const eligibilityBooking = {
-    status: booking.status,
-    checkIn: booking.checkIn,
-    checkOut: booking.checkOut,
-    hasWorkParty: current !== null,
-    hasOtherPromoCode: redemptions.some((row) => row.promoCode && !row.promoCode.workPartyEvent),
-    quotePriced,
-    memberOwned: Boolean(ownerMemberId),
-  };
+  const current = facts.current;
 
-  // #130: whether the work party on the booking can be taken off it.
-  const removal = current
-    ? workPartyRemovalEligibility(
-        { status: booking.status, checkOut: booking.checkOut, quotePriced, workPartyEventId: current.id },
-        { today },
-        current.id,
-      )
-    : null;
+  // fork triyder/AlpineClubBookingsNZ#130: whether the work party on the booking can be taken off it.
+  const removal = current ? workPartyRemovalEligibility(facts.remove, { today }, current.id) : null;
 
   return NextResponse.json({
     currentWorkParty: current,
     removal: removal && { eligible: removal.ok, reason: removal.ok ? null : removal.reason },
     workParties: events.map((event) => {
       const eligibility = workPartyBookingEligibility(
-        eligibilityBooking,
+        facts.add,
         { bookingLodgeId, today, multiPromoCodes },
         event,
       );
@@ -127,10 +90,10 @@ export async function GET(
 }
 
 /**
- * "Add booking to work party" (fork #119), and with `action: "remove"`
- * "Remove from work party" (#130). `mode: "preview"` runs the whole
+ * "Add booking to work party" (fork triyder/AlpineClubBookingsNZ#119), and with `action: "remove"`
+ * "Remove from work party" (fork triyder/AlpineClubBookingsNZ#130). `mode: "preview"` runs the whole
  * change and rolls it back, returning the figures and the settlement methods
- * offered (`settlementOptions`, #129) for the confirm dialog;
+ * offered (`settlementOptions`, triyder/AlpineClubBookingsNZ#129) for the confirm dialog;
  * `mode: "apply"` saves it, refusing if the figures moved since the preview.
  * Booking Officers and Full Admins (`bookings:edit`); the service re-authorises
  * the officer under its locks. The work and the money rules are in
@@ -154,12 +117,9 @@ export async function POST(
   const recent = await requireRecentAuth();
   if (!recent.ok) return recent.response;
 
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(req, { error: "Invalid JSON" });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
@@ -208,7 +168,7 @@ export async function POST(
   } catch (error) {
     if (error instanceof WorkPartyCorrectionFiguresChangedError) {
       return NextResponse.json(
-        { error: error.message, code: error.code, figures: error.actual },
+        { error: error.message, code: error.code, figures: error.actual, settlementOptions: error.settlementOptions },
         { status: 409 },
       );
     }
