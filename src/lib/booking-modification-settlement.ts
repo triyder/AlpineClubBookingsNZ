@@ -32,7 +32,6 @@ import {
   enqueueAdditionalPaymentIntentRecovery,
   enqueueBookingModificationRefundRecovery,
   markBookingModificationRefundRecoverySucceeded,
-  NoRefundPaymentIntentError,
   processPaymentRecoveryOperations,
 } from "@/lib/payment-recovery";
 import { runOrganiserChildRefundDebtNow } from "@/lib/organiser-child-refund-executor";
@@ -74,6 +73,12 @@ export type BookingModificationPaymentContext = {
   /** #4992: frozen in the edit transaction; null plan means the whole debt awaits planning. */
   ownCardRefund: { plan: RefundAllocationSlice[] | null } | null;
   pendingRefundAmountCents: number;
+  /**
+   * #5061 follow-up (`INV-PAY-154`): a Stripe dispute holds the member's card
+   * payment, so this edit's refund is with the treasurer (a hand-back) and no
+   * Stripe refund runs here; the email says so (`with_treasurer`).
+   */
+  refundHeldForDispute: boolean;
   /**
    * #3653: non-null when the refund comes out of a group organiser's combined
    * card payment; its debt was written under the edit's
@@ -196,21 +201,16 @@ async function reserveBookingModificationCardRefund(
     if (err instanceof Prisma.PrismaClientKnownRequestError || err instanceof Prisma.PrismaClientUnknownRequestError) throw err;
     logger.error({ err, bookingId, paymentId }, "Could not plan the edit's card refund; reserving the whole debt (#4992)");
   }
-  try {
-    await enqueueBookingModificationRefundRecovery({
-      bookingId, paymentId, bookingModificationId, amountCents: pendingRefundAmountCents,
-      stripeKeyPrefix: buildBookingModificationRefundStripeKeyPrefix(door, bookingId, bookingModificationId),
-      ...(plan ? { allocationPlan: plan } : {}),
-      store: tx,
-    });
-  } catch (err) {
-    // A payment with no Stripe intent has no card to owe a refund to: the edit
-    // still stands and the door reports the refund pending, as before #4992.
-    // Any other failure rolls the edit back.
-    if (!(err instanceof NoRefundPaymentIntentError)) throw err;
-    logger.error({ err, bookingId, paymentId }, "Could not reserve the edit's card refund debt: the payment has no Stripe intent (#4992)");
-    return null;
-  }
+  // #5212 (`INV-PAY-160`): any failure rolls the edit back, a payment with no
+  // Stripe intent included (`NoRefundPaymentIntentError`). The settlement sent
+  // that payment's reduction to the treasurer instead (`editRefundHasCardToReturnTo`),
+  // so a card refund is owed here only where this write can record its debt.
+  await enqueueBookingModificationRefundRecovery({
+    bookingId, paymentId, bookingModificationId, amountCents: pendingRefundAmountCents,
+    stripeKeyPrefix: buildBookingModificationRefundStripeKeyPrefix(door, bookingId, bookingModificationId),
+    ...(plan ? { allocationPlan: plan } : {}),
+    store: tx,
+  });
   return { plan };
 }
 
@@ -240,6 +240,7 @@ export async function drainSupersededPrimaryIntents({
  * an organiser-card refund is `organiser_card` only when its debt says Stripe
  * made it, otherwise `organiser_card_pending`. #4070: an own-card refund is
  * `own` only when `ownCardRefundMade` says so, otherwise `own_card_pending`.
+ * #5061 follow-up: `with_treasurer` when a Stripe dispute held the refund.
  */
 export type BookingModificationRefundOutcome = {
   stripeRefundId: string | undefined;
@@ -259,6 +260,8 @@ export async function executeBookingModificationRefund({
   door: BookingModificationRefundDoor;
   failureMessage: string;
 }): Promise<BookingModificationRefundOutcome> {
+  // #5061 follow-up: never `own_card_pending` - nothing is on its way until the treasurer acts.
+  if (result.refundHeldForDispute) return { stripeRefundId: undefined, refundDestination: "with_treasurer" };
   if (result.pendingRefundAmountCents <= 0 || !result.paymentId) {
     // #4057: an organiser child's refund that was not run here is still owed.
     return { stripeRefundId: undefined, refundDestination: result.organiserChildRefund ? "organiser_card_pending" : "own" };
@@ -288,11 +291,12 @@ export async function executeBookingModificationRefund({
   }
 
   if (!result.ownCardRefund) {
-    // The reserve wrote no row (the payment has no Stripe intent) and logged why;
-    // Stripe is not asked and no debt was persisted.
+    // #5212: no door reaches this - the reserve writes the debt or rolls the
+    // edit back. Kept so a caller that skipped the reserve never has Stripe
+    // asked for a refund no debt row stands behind.
     logger.error(
       { bookingId, amountCents: result.pendingRefundAmountCents },
-      "No card refund was reserved for this edit; see the reserve's error (#4992)",
+      "No card refund debt was reserved for this edit, so Stripe was not asked (#4992, #5212)",
     );
     return { stripeRefundId: undefined, refundDestination: "own_card_pending" };
   }

@@ -11,6 +11,11 @@ import {
   getStuckStateDashboard,
   type StuckStateDashboardDependencies,
 } from "@/lib/stuck-state-dashboard";
+import {
+  STUCK_STATE_AFFECTED_COUNT_TTL_MS,
+  getStuckStateAffectedCount,
+  resetStuckStateAffectedCountCache,
+} from "@/lib/stuck-state-affected-count";
 import { STUCK_STATE_DETAIL_ROW_CAP } from "@/lib/stuck-state-payment-signals";
 import { adminAnchorHref, adminHref } from "@/lib/admin-hubs";
 
@@ -45,6 +50,7 @@ const modulesOn: FeatureFlags = {
   maintenanceReports: true,
   alpineCentralServer: false,
   commsPortal: false,
+  mcpServer: false,
   memberLodgeRoster: false,
   foodOrders: false,
   multiPromoCodes: false,
@@ -147,7 +153,7 @@ function buildDeps(overrides?: Partial<StuckStateDashboardDependencies>) {
       },
       missingInvoices: { count: 0 },
       refundsMissingCreditNotes: { count: 0, graceHours: 24 },
-      contactGroupMismatches: { count: 0, cacheReady: true },
+      contactGroupMismatches: { count: 0, resyncCount: 0, reviewByHandCount: 0, cacheReady: true },
       contactLinkMismatches: { count: 0, cacheReady: true },
       apiBudget: {
         status: "healthy",
@@ -282,7 +288,7 @@ describe("getStuckStateDashboard", () => {
         },
         missingInvoices: { count: 9 },
         refundsMissingCreditNotes: { count: 10, graceHours: 24 },
-        contactGroupMismatches: { count: 12, cacheReady: true },
+        contactGroupMismatches: { count: 12, resyncCount: 12, reviewByHandCount: 0, cacheReady: true },
         contactLinkMismatches: { count: 11, cacheReady: true },
         apiBudget: {
           status: "warning",
@@ -1037,12 +1043,116 @@ describe("voided bank refund notes to answer (#4162)", () => {
   });
 });
 
+describe("Xero contact mismatch items (#5234)", () => {
+  async function dashboardWith(
+    overrides: Partial<Awaited<ReturnType<StuckStateDashboardDependencies["getXeroAdminHealthSnapshot"]>>>,
+  ) {
+    const deps = buildDeps();
+    const base = await deps.getXeroAdminHealthSnapshot();
+    vi.mocked(deps.getXeroAdminHealthSnapshot).mockResolvedValue({ ...base, ...overrides });
+    return getStuckStateDashboard({ deps, now: new Date("2026-06-22T00:00:00.000Z") });
+  }
+
+  it("keeps an information-only group entry in the count and says it is reviewed by hand, not repaired", async () => {
+    const dashboard = await dashboardWith({
+      contactGroupMismatches: { count: 1, resyncCount: 0, reviewByHandCount: 1, cacheReady: true },
+    });
+    const item = dashboard.items.find((entry) => entry.id === "xero-contact-group-mismatches");
+    expect(item).toMatchObject({ count: 1, href: `${adminHref("xero")}?section=contactGroupMismatches` });
+    expect(item?.summary).toContain("1 to review by hand");
+    expect(item?.summary).toContain("the re-sync never changes them");
+    expect(item?.summary).not.toContain("to re-sync");
+    expect(item?.summary).not.toMatch(/repair/i);
+  });
+
+  it("splits a mixed group count into entries to re-sync and entries to review by hand", async () => {
+    const dashboard = await dashboardWith({
+      contactGroupMismatches: { count: 3, resyncCount: 2, reviewByHandCount: 1, cacheReady: true },
+    });
+    const item = dashboard.items.find((entry) => entry.id === "xero-contact-group-mismatches");
+    expect(item?.count).toBe(3);
+    expect(item?.summary).toContain("2 to re-sync, 1 to review by hand");
+  });
+
+  it("links contact link mismatches to their own section", async () => {
+    const dashboard = await dashboardWith({ contactLinkMismatches: { count: 2, cacheReady: true } });
+    expect(dashboard.items.find((entry) => entry.id === "xero-contact-link-mismatches")?.href).toBe(
+      `${adminHref("xero")}?section=contactLinkMismatches`,
+    );
+  });
+});
+
 it("keeps exhausted settlement figure alerts visible for finance", async () => {
   const deps = buildDeps({ countExhaustedCashSettlementAlerts: vi.fn().mockResolvedValue(1) });
   const result = await getStuckStateDashboard({ deps });
   expect(result.items).toContainEqual(expect.objectContaining({
     id: "payment-settlement-alert-undelivered", count: 1, severity: "critical", href: "/admin/payments",
   }));
+});
+
+/**
+ * #4962: the Stuck States headline as an officer work queue count. Asked for on
+ * every admin navigation, so one scan is shared for a minute.
+ */
+describe("getStuckStateAffectedCount", () => {
+  const now = new Date("2026-07-01T00:00:00.000Z");
+  const later = (ms: number) => new Date(now.getTime() + ms);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetStuckStateAffectedCountCache();
+  });
+
+  function depsWithStuckPayments(count: number) {
+    return buildDeps({
+      db: {
+        paymentRecoveryOperation: { count: vi.fn().mockResolvedValue(count) },
+      } as unknown as StuckStateDashboardDependencies["db"],
+    });
+  }
+
+  it("is the headline the Stuck States page leads with", async () => {
+    const deps = depsWithStuckPayments(2);
+    const dashboard = await getStuckStateDashboard({ deps, now });
+
+    expect(dashboard.totals.affectedCount).toBeGreaterThan(0);
+    expect(await getStuckStateAffectedCount({ deps, now })).toBe(
+      dashboard.totals.affectedCount,
+    );
+  });
+
+  it("shares one scan within the minute and scans again after it", async () => {
+    const deps = depsWithStuckPayments(2);
+    const scans = () => vi.mocked(deps.loadEffectiveModuleFlags).mock.calls.length;
+
+    const first = await getStuckStateAffectedCount({ deps, now });
+    expect(scans()).toBe(1);
+    expect(
+      await getStuckStateAffectedCount({
+        deps,
+        now: later(STUCK_STATE_AFFECTED_COUNT_TTL_MS - 1),
+      }),
+    ).toBe(first);
+    expect(scans()).toBe(1);
+
+    await getStuckStateAffectedCount({
+      deps,
+      now: later(STUCK_STATE_AFFECTED_COUNT_TTL_MS),
+    });
+    expect(scans()).toBe(2);
+  });
+
+  it("does not keep a failed scan, so the next request tries again", async () => {
+    const deps = depsWithStuckPayments(2);
+    vi.mocked(deps.loadEffectiveModuleFlags).mockRejectedValueOnce(
+      new Error("connection reset"),
+    );
+
+    await expect(getStuckStateAffectedCount({ deps, now })).rejects.toThrow(
+      "connection reset",
+    );
+    await expect(getStuckStateAffectedCount({ deps, now })).resolves.toBeGreaterThan(0);
+  });
 });
 
 /**

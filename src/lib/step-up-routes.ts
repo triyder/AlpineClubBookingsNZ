@@ -34,6 +34,7 @@ export const STEP_UP_OPERATIONS = [
   { file: "src/lib/card-refund-paid-twice.ts", exportName: "resolveCardRefundPaidTwice" },
   { file: "src/lib/manual-refund-task-resolution.ts", exportName: "resolveManualRefundTask" },
   { file: "src/lib/manual-refund-task-reopen.ts", exportName: "reopenManualRefundTask" },
+  { file: "src/lib/manual-refund-task-dispute-reduction.ts", exportName: "reduceDisputedHandBack" },
   { file: "src/lib/bank-refund-void-follow-up.ts", exportName: "pickRefundForUnmatchedVoid" },
   { file: "src/lib/member-contact-erasure.ts", exportName: "MEMBER_CONTACT_ERASURE_PATCH" },
   // Not destructive, but a whole person's record in one file (#4915): an admin
@@ -52,6 +53,8 @@ export const STEP_UP_PRISMA_WRITES = {
   accessRoleDefinition: ["create", "createMany", "delete", "deleteMany", "update", "updateMany", "upsert"],
   loginSecuritySetting: ["create", "update", "updateMany", "upsert"],
   clubModuleSettings: ["create", "update", "updateMany", "upsert"],
+  // ALP-653: who may connect an AI app, and how much a connection may do.
+  mcpSettings: ["create", "update", "updateMany", "upsert"],
 } as const;
 
 /**
@@ -112,6 +115,7 @@ export const STEP_UP_ROUTES = [
   { method: "PUT", file: "src/app/api/admin/security/magic-link/route.ts" },
   { method: "PUT", file: "src/app/api/admin/security/officer-two-factor/route.ts" },
   { method: "PUT", file: "src/app/api/admin/modules/route.ts" },
+  { method: "PUT", file: "src/app/api/admin/mcp/settings/route.ts" },
   { method: "PUT", file: "src/app/api/admin/refund-requests/[id]/route.ts" },
   { method: "POST", file: "src/app/api/admin/payments/card-refunds/[id]/try-card-again/route.ts" },
   { method: "POST", file: "src/app/api/admin/payments/card-refunds/[id]/paid-another-way/route.ts" },
@@ -119,6 +123,7 @@ export const STEP_UP_ROUTES = [
   { method: "POST", file: "src/app/api/admin/payments/card-refunds/[id]/nothing-left-owed/route.ts" },
   { method: "POST", file: "src/app/api/admin/payments/manual-refund-tasks/[id]/route.ts" },
   { method: "POST", file: "src/app/api/admin/payments/manual-refund-tasks/[id]/reopen/route.ts" },
+  { method: "POST", file: "src/app/api/admin/payments/manual-refund-tasks/[id]/reduce-by-lost-dispute/route.ts" },
   { method: "POST", file: "src/app/api/admin/payments/bank-refund-voids/[id]/pick/route.ts" },
   { method: "PATCH", file: "src/app/api/admin/booking-change-requests/[id]/route.ts" },
   { method: "PATCH", file: "src/app/api/admin/booking-exception-requests/[id]/route.ts" },

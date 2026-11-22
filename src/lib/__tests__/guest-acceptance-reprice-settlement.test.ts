@@ -38,6 +38,12 @@ const h = vi.hoisted(() => ({
   realExecuteBookingModificationRefund: undefined as unknown as (typeof import("@/lib/booking-modification-settlement"))["executeBookingModificationRefund"],
 }));
 
+// #5061 follow-up: no capture here is disputed; the edit's hold is proved in
+// `stripe-dispute-edit.realdb.test.ts`.
+vi.mock("@/lib/stripe-dispute-hold", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/stripe-dispute-hold")),
+  paymentDisputedCaptureCents: async () => ({ cents: 0, disputes: [] }),
+}));
 vi.mock("@/lib/prisma", () => ({ prisma: { paymentRecoveryOperation: { findUnique: h.recoveryFindUnique, updateMany: h.recoveryUpdateMany } } }));
 // #4872: the re-price's reserve freezes its plan under the Payment row, beside the
 // superseded-capture hold-back read (no superseded rows here, so nothing is held back).
@@ -55,6 +61,11 @@ vi.mock("@/lib/payment-transactions", async (importOriginal) => ({
   ...((await importOriginal()) as typeof import("@/lib/payment-transactions")),
   planStripeRefundAllocation: mockPlanStripeRefundAllocation,
   refundPaymentTransactions: h.refundPaymentTransactions,
+}));
+// #4516 (M4d): the hand-back's R05 is the journal's (`member-money-refunds.realdb.test.ts` proves R05); here, that the raise asks for it.
+vi.mock("@/lib/member-money/doors", async (importOriginal) => ({
+  ...((await importOriginal()) as typeof import("@/lib/member-money/doors")),
+  postHandBackObligation: vi.fn(async () => null),
 }));
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -166,6 +177,8 @@ function booking(overrides: Record<string, unknown> = {}) {
       refundedAmountCents: 0,
       creditAppliedCents: 0,
       xeroInvoiceId: null,
+      // #5212: a card payment Stripe holds a record of, so a reduction is the card's.
+      stripePaymentIntentId: "pi_1" as string | null,
     },
     promoRedemptions: [
       { id: "r1", promoCodeId: "p1", applicationOrder: 0, promoCode: { id: "p1", code: "CARA" }, guestTargets: [] },
@@ -184,10 +197,20 @@ function tx(loaded: ReturnType<typeof booking>) {
     },
     bookingModification: { create: vi.fn(async () => ({ id: "mod-1" })) },
     // #3980: an acceptance that read no invoice link claims the payment row.
-    payment: { update: vi.fn(), updateMany: vi.fn(async () => ({ count: 1 })) },
+    // #5212: a payment that names no Stripe intent has no captured charge naming one either.
+    payment: {
+      update: vi.fn(),
+      updateMany: vi.fn(async () => ({ count: 1 })),
+      findUnique: vi.fn(async () => ({ ...loaded.payment, transactions: [] })),
+    },
     // #3954: no increase is waiting on its mint's recovery for a reduction to net off.
     paymentRecoveryOperation: { findMany: vi.fn(async () => []) },
-    manualRefundTask: { aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })), createMany: vi.fn(async () => ({ count: 1 })) },
+    manualRefundTask: {
+      aggregate: vi.fn(async () => ({ _sum: { amountCents: null } })),
+      createMany: vi.fn(async () => ({ count: 1 })),
+      // #4516 (M4d): the raised hand-back, read for its R05.
+      findUniqueOrThrow: vi.fn(async () => ({ id: "hand-back-1", amountCents: 6000 })),
+    },
   };
 }
 
@@ -579,6 +602,11 @@ describe("an internet-banking reduction asks the treasurer to send it back (D-38
       ],
       skipDuplicates: true,
     });
+    // #4516 (M4d): the hand-back's refund debt posts with the task, on the acceptance's own transaction.
+    const { postHandBackObligation } = await import("@/lib/member-money/doors");
+    expect(vi.mocked(postHandBackObligation)).toHaveBeenCalledWith(client, JOURNAL, expect.objectContaining({
+      bookingId: "booking-1", taskId: "hand-back-1", amountCents: 6000, debtorRead: "booking-row",
+    }));
     if (!reprice.repriced) throw new Error("expected a re-price");
     h.sendBookingModifiedEmail.mockResolvedValue(undefined);
     // #4070: the real refund helper; no Stripe refund runs, so the member's own wording stands.
@@ -606,6 +634,36 @@ describe("an internet-banking reduction asks the treasurer to send it back (D-38
     await settleGuestAcceptanceRepriceAfterCommit({ bookingId: "booking-1", actorMemberId: "cara", reprice, format: CLUB_FORMAT_TEST });
     expect(h.sendBookingModifiedEmail).toHaveBeenCalledWith(
       expect.objectContaining({ refundByBankTransfer: null }),
+      CLUB_FORMAT_TEST,
+    );
+  });
+
+  it("MUTATION (#5212, INV-PAY-160): a card payment with no Stripe record goes the same way - one task, no card refund owed or asked", async () => {
+    // Drop `editRefundHasCardToReturnTo` from the settlement and this reserves a
+    // card refund the payment has no intent for, with no task and the card wording.
+    const loaded = booking({ payment: { ...booking().payment, stripePaymentIntentId: null } });
+    const client = tx(loaded);
+    const reprice = await repriceBookingAfterGuestAcceptance(client as never, {
+      bookingId: "booking-1",
+      acceptedGuestId: "g-cara",
+      actorMemberId: "cara",
+      todayAtClub: TODAY,
+      format: CLUB_FORMAT_TEST, journal: JOURNAL,
+    });
+    expect(reprice).toMatchObject({ repriced: true, refundAmountCents: 6000, pendingRefundAmountCents: 0, hasSucceededPayment: false });
+    expect(h.enqueueBookingModificationRefundRecovery).not.toHaveBeenCalled();
+    expect(client.manualRefundTask.createMany).toHaveBeenCalledTimes(1);
+    expect(client.manualRefundTask.createMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ paymentId: "pay-1", amountCents: 6000, occurrenceKey: "edit-refund-hand-back:mod-1" })],
+      skipDuplicates: true,
+    });
+    if (!reprice.repriced) throw new Error("expected a re-price");
+    h.sendBookingModifiedEmail.mockResolvedValue(undefined);
+    h.executeBookingModificationRefund.mockImplementation(h.realExecuteBookingModificationRefund);
+    await settleGuestAcceptanceRepriceAfterCommit({ bookingId: "booking-1", actorMemberId: "cara", reprice, format: CLUB_FORMAT_TEST });
+    expect(h.refundPaymentTransactions).not.toHaveBeenCalled();
+    expect(h.sendBookingModifiedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ refundAmountCents: 6000, refundByBankTransfer: "member", refundDestination: "own" }),
       CLUB_FORMAT_TEST,
     );
   });

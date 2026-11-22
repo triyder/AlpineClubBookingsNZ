@@ -16,8 +16,8 @@
  * COMPLETED, the clamp only on one that is still pending (PENDING,
  * PAYMENT_PENDING, or an unpaid confirmed whole-lodge hold), and no edit moves
  * a paid booking back to pending. `BatchModificationResponse` carries all four.
- * The hosting linked-move quote (`combineLinkedMoveQuote`, fork #132) and
- * "Add to work party" (fork #129, its own/family rule and Remove's guard) both count every
+ * The hosting linked-move quote (`combineLinkedMoveQuote`, fork triyder/AlpineClubBookingsNZ#132) and
+ * "Add to work party" (Remove's guard, and the absorbed-ask test, #5149) both count every
  * cent, so what the member is told comes back matches their balance change.
  * Client-safe: no imports.
  */
@@ -38,4 +38,31 @@ export function editMoneyBackCents(result: EditSettlementMoneyBack): number {
 
 export function editTotalMoneyBackCents(result: EditMoneyBack): number {
   return editMoneyBackCents(result) + result.refundedExcessCreditCents;
+}
+
+/**
+ * Every cent of a work-party correction that comes back as account credit:
+ * all the money back less what is refunded (paid money credited, a paid
+ * booking's applied credit given back, and an unpaid one's applied credit
+ * freed). One rule for the server and the confirm dialog.
+ */
+export function workPartyCreditBackCents(figures: EditMoneyBack): number {
+  return editTotalMoneyBackCents(figures) - figures.refundAmountCents;
+}
+
+/**
+ * #5149 (B-L1 of the maintainers' comment
+ * https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-6952444211):
+ * what "Add to work party" says when an unpaid additional ask took the whole
+ * reduction (#3954, `INV-PAY-120`), so nothing comes back and there is nothing
+ * to choose. One sentence for the server's refusal and the confirm dialog;
+ * `amount` is already formatted for the club.
+ */
+export function workPartyAskAbsorbedSentence(amount: string): string {
+  return `The discount cancels ${amount} of what is still owed on this booking, so nothing comes back.`;
+}
+
+/** The same, when the ask took only part of the discount and the rest comes back (#5149 review M4). */
+export function workPartyAskPartlyAbsorbedSentence(amount: string): string {
+  return `Of the discount, ${amount} cancels what is still owed on this booking.`;
 }

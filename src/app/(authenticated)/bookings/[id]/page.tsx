@@ -1,4 +1,3 @@
-import { canDownloadBookingInvoice } from "@/lib/booking-invoice-access";
 import { adminHref } from "@/lib/admin-hubs";
 import { Suspense } from "react";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -28,6 +27,7 @@ import { loadBookingDetailHistory } from "./_lib/booking-detail-history";
 import { resolveBookingDetailEditAccess } from "./_lib/booking-detail-edit-access";
 import { resolveBookingDetailPayment } from "./_lib/booking-detail-payment";
 import { loadOrganiserCardAppealCeiling, loadSupersededHeldBackCents } from "./_lib/booking-detail-organiser-card-appeal";
+import { loadBookingDetailWaitlistPosition } from "./_lib/booking-detail-waitlist-position";
 import { resolveBookingDetailLinkedParty } from "./_lib/booking-detail-linked-party";
 import { buildBookingDetailEditorData } from "./_lib/booking-detail-editor-data";
 import { renderBookingDetailMessages } from "./_lib/booking-detail-messages";
@@ -198,8 +198,8 @@ export default async function BookingDetailPage({
     viewer,
     consent,
     access,
-    // #3991: the ledger credit the history loader already read for this page.
-    appliedCreditCents: history.amountOwed.appliedCreditCents,
+    // #3991: the amount owed and ledger credit the history loader already read for this page.
+    amountOwed: history.amountOwed,
   });
   const backHref = resolveInternalReturnPath(
     query.returnTo,
@@ -357,7 +357,6 @@ export default async function BookingDetailPage({
           booking={editorData}
           canModify={canModify}
           canAdminOverride={canAdminOverride}
-          canDownloadInvoice={canDownloadBookingInvoice(viewer, booking)}
         />
       </section>
 
@@ -399,6 +398,7 @@ export default async function BookingDetailPage({
 
       <BookingPaymentCards
         booking={booking}
+        waitlistPosition={await loadBookingDetailWaitlistPosition(booking)}
         club={club}
         money={money}
         viewer={viewer}

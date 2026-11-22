@@ -55,7 +55,7 @@ import {
 } from "@/lib/promo";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { canViewCalendarEvents } from "@/lib/calendar-access";
-import { VISIBLE_CALENDAR_EVENT_WHERE } from "@/lib/calendar-events";
+import { listDashboardCalendarEvents } from "@/lib/dashboard-calendar-events";
 import { canViewWorkParties } from "@/lib/work-party-access";
 import { listUpcomingMemberWorkParties } from "@/lib/work-party-member";
 import {
@@ -498,24 +498,15 @@ export default async function DashboardPage() {
   // the process's own zone (INV-DATE-019).
   const twoWeeksOut = club.startOfDay(addCalendarDays(todayDate, 14));
   const upcomingEvents = showEventsCard
-    ? await prisma.calendarEvent.findMany({
-        where: {
-          startsAt: { gte: startOfTodayNZ, lte: twoWeeksOut },
-          ...VISIBLE_CALENDAR_EVENT_WHERE,
-        },
-        orderBy: { startsAt: "asc" },
-        take: 6,
-        select: {
-          id: true,
-          title: true,
-          startsAt: true,
-          allDay: true,
-          isMeeting: true,
-        },
+    ? await listDashboardCalendarEvents({
+        from: startOfTodayNZ,
+        to: twoWeeksOut,
+        modules,
+        viewer: session.user,
       })
     : [];
 
-  // Upcoming work parties (fork #118): members only, with the module on. The
+  // Upcoming work parties (#5148): members only, with the module on. The
   // bound is the club's today as a date-only value, against the work party's
   // date-only last night, so one finishing today is still listed.
   const showWorkPartiesCard =
@@ -807,7 +798,7 @@ export default async function DashboardPage() {
           </Card>
         )}
 
-        {/* Fork #121: beside "Report an issue", while the module is on. */}
+        {/* Fork triyder/AlpineClubBookingsNZ#121: beside "Report an issue", while the module is on. */}
         {modules.foodOrders && canActorUseFoodOrders(session.user) && (
           <FoodOrderDashboardCard />
         )}

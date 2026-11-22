@@ -1,14 +1,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { parseJsonRequestBody } from "@/lib/api-json";
 import {
   buildStructuredAuditLogCreateArgs,
   getAuditRequestContext,
 } from "@/lib/audit";
 import {
   buildUniqueLodgeSlug,
-  LODGE_INVOICE_DETAIL_FIELDS,
-  lodgeInvoiceDetailsSchemaShape,
-  type LodgeInvoiceDetailField,
   lodgeSelect,
   normalizeLodgeText,
   redactLodgeForAudit,
@@ -32,7 +30,6 @@ const patchSchema = z
   .object({
     name: z.string().trim().min(1).max(120).optional(),
     address: z.string().trim().max(300).nullable().optional(),
-    ...lodgeInvoiceDetailsSchemaShape,
     doorCode: z.string().trim().max(80).nullable().optional(),
     travelNote: z.string().trim().max(2000).nullable().optional(),
     active: z.boolean().optional(),
@@ -57,12 +54,11 @@ export async function PATCH(
     return NextResponse.json({ error: "Invalid lodge id" }, { status: 400 });
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const jsonBody = await parseJsonRequestBody(request, {
+    error: "Invalid JSON",
+  });
+  if (!jsonBody.ok) return jsonBody.response;
+  const body = jsonBody.body;
 
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
@@ -109,7 +105,7 @@ export async function PATCH(
     doorCode?: string | null;
     travelNote?: string | null;
     active?: boolean;
-  } & Partial<Record<LodgeInvoiceDetailField, string | null>> = {};
+  } = {};
 
   const nameChanges = parsed.data.name !== undefined && parsed.data.name !== existing.name;
   if (nameChanges) {
@@ -117,11 +113,6 @@ export async function PATCH(
   }
   if (parsed.data.address !== undefined) {
     data.address = normalizeLodgeText(parsed.data.address);
-  }
-  for (const field of LODGE_INVOICE_DETAIL_FIELDS) {
-    if (parsed.data[field] !== undefined) {
-      data[field] = normalizeLodgeText(parsed.data[field]);
-    }
   }
   if (parsed.data.doorCode !== undefined) {
     data.doorCode = normalizeLodgeText(parsed.data.doorCode);

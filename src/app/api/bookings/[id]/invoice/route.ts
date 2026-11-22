@@ -1,20 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { prepareBookingInvoiceDownload } from "@/app/(authenticated)/bookings/[id]/_lib/booking-invoice-download";
+import { bookingInvoicePdfResponse } from "@/app/(authenticated)/bookings/[id]/_lib/booking-invoice-pdf-response";
 import { auth } from "@/lib/auth";
-import { checkRateLimit, rateLimitedResponse, rateLimiters } from "@/lib/rate-limit";
+import { BOOKING_INVOICE_DOWNLOAD_BOOKING_LIMIT, BOOKING_INVOICE_DOWNLOAD_MEMBER_LIMIT } from "@/lib/booking-invoice-rate-limits";
+import { checkRateLimit, getClientIp, rateLimitedResponse } from "@/lib/rate-limit";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 
 /**
- * GET /api/bookings/[id]/invoice (fork #115)
+ * GET /api/bookings/[id]/invoice (#5066)
  *
- * Downloads the booking's invoice as a PDF: Xero's own invoice when the booking
- * has one, otherwise one generated from the booking. Open to everyone who can
- * view the booking page except a guest linked to someone else's booking
- * (`canDownloadBookingInvoice`); anyone else gets 404. Read-only.
+ * Downloads the booking's invoice for exactly the viewers and bookings the
+ * booking page offers it to (`resolveBookingInvoiceOffer`); anything else is
+ * `404`. With the club's Xero module on that is the primary Xero invoice as
+ * Xero's own PDF; with it off, the app's generated document (slice 2). Takes no
+ * invoice id from the caller. Writes one audit row per successful download.
  */
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
@@ -27,36 +30,17 @@ export async function GET(
   });
   if (inactiveResponse) return inactiveResponse;
 
-  const limited = await checkRateLimit(
-    rateLimiters.bookingQuery,
-    `booking-invoice:${session.user.id}`,
-  );
-  if (!limited.success) return rateLimitedResponse(limited);
+  // A download is a live Xero read, or a PDF the app renders (Xero off). The
+  // per-member budget comes first; the per-booking one (shared with the
+  // booking's credit notes, so several officers on one booking cannot multiply
+  // the reads) is charged only once the caller is authorised and the invoice
+  // is on offer.
+  const memberLimit = await checkRateLimit(BOOKING_INVOICE_DOWNLOAD_MEMBER_LIMIT, session.user.id);
+  if (!memberLimit.success) return rateLimitedResponse(memberLimit);
 
-  const download = await prepareBookingInvoiceDownload(id, session);
-  switch (download.kind) {
-    case "NOT_FOUND":
-      return NextResponse.json({ error: "Booking not found" }, { status: 404 });
-    case "XERO_UNAVAILABLE":
-      return NextResponse.json(
-        { error: "The invoice could not be fetched from Xero; please try again." },
-        { status: 502 },
-      );
-    case "XERO_NOT_CONNECTED":
-      return NextResponse.json(
-        { error: "Xero is not connected right now, so this booking's Xero invoice cannot be downloaded. Please ask the club for a copy." },
-        { status: 503 },
-      );
-    case "CANNOT_GENERATE":
-      return NextResponse.json({ error: download.message }, { status: 409 });
-    case "PDF":
-      return new NextResponse(new Uint8Array(download.body), {
-        status: 200,
-        headers: {
-          "Content-Type": "application/pdf",
-          "Content-Disposition": `attachment; filename="${download.fileName}"`,
-          "Cache-Control": "private, no-store",
-        },
-      });
-  }
+  const download = await prepareBookingInvoiceDownload(id, session, { kind: "INVOICE" }, {
+    ipAddress: getClientIp(request),
+    chargeBookingLimit: () => checkRateLimit(BOOKING_INVOICE_DOWNLOAD_BOOKING_LIMIT, id),
+  });
+  return bookingInvoicePdfResponse(download, "invoice");
 }

@@ -22,6 +22,7 @@ sequencing):
 | `BookingWaitlistAlternateLodge` | direct `lodgeId` junction | ADR-004 cross-lodge waitlist opt-in: lodges a waitlisted member would also accept; rows only widen what the processor may offer |
 | `BookingGuest` / `BookingGuestNight` | via `Booking` | no direct FK |
 | `BookingRequestPendingAdultReservationNight` | direct `lodgeId` | unnamed SCHOOL adult capacity, one count per request/night; always matches the held booking's immutable lodge, released with that hold (#3413) |
+| `BookingImportBatch` / `BookingImportRow` | direct `lodgeId` | a paid-booking import is one lodge per batch (#5005); the row copies the batch's lodge so a Booking Ref imports once per lodge (`INV-CAP-040`), and each imported booking's own `lodgeId` matches it |
 | `GroupBooking` | via organiser `Booking` | one group = one lodge (ADR-001 open question 1) |
 | `ChoreTemplate` | direct `lodgeId` | roster generation filters by lodge |
 | `LodgeSettings` | per-lodge row | converted from singleton |
@@ -32,7 +33,7 @@ sequencing):
 | `MaintenanceReport` | direct `lodgeId` | a reported physical fault belongs to one building (#2780); `onDelete: Cascade` — a deleted lodge takes its fault history with it |
 | `LodgeMaintenanceReportToken` | direct `lodgeId` (`@unique`) | one live QR-sign bearer token per lodge (#2780); rotating overwrites in place, `onDelete: Cascade` |
 | `MaintenanceReportAnswer` | via `MaintenanceReport` | no direct FK; answers store the question label as asked, so they carry the report's lodge |
-| `FoodOrder` | direct `lodgeId` | a food order is for one building's supplies (fork #121); every list, total and the hut-leader rule (`canManageFoodOrder`: a hut leader manages only orders at the lodge their access window covers today) read it. `onDelete: Cascade`, like `MaintenanceReport` |
+| `FoodOrder` | direct `lodgeId` | a food order is for one building's supplies (fork triyder/AlpineClubBookingsNZ#121); every list, total and both hut-leader rules (`foodOrderVisibility` and `canManageFoodOrder`: a hut leader sees and manages only orders at the lodges their access window covers today, owner decision on PR #5143) read it; ordering follows booking eligibility (`getEligibleLodgeIdsForMember`). `onDelete: Cascade`, like `MaintenanceReport` |
 | `FoodOrderItem` | via `FoodOrder` | no direct FK; an item line carries its order's lodge |
 | Model                                                              | Scoping                                                            | Notes                                                                                                                                                                                                                                                                                                                                                   |
 | ------------------------------------------------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -59,6 +60,14 @@ sequencing):
 `PrivacyHostingSettings` is club-wide (`id = "default"`): one deployment serves
 one club, and the hosting provider and storage locations describe that
 installation, including backups across all lodges. It has no lodge key.
+
+## AI app connections (ALP-653)
+
+`McpClient`, `McpGrant`, `McpAuthCode`, `McpToken` and the `McpSettings`
+singleton (`id = "default"`) are club-wide and have no lodge key. A connection
+is a way of signing in as a member, and a sign-in has no lodge. Each action a
+connection runs is scoped by the route it calls, exactly as for a browser
+(`INV-MCP-007`).
 
 ## Privacy retention
 
@@ -96,6 +105,16 @@ M4b receipt adapters scope every settlement line, application read and residue
 transfer by the Payment's immutable booking id. Receipt legs carry that booking's
 actual lodge; no default-lodge lookup occurs. The owner-run receipt census spans
 all R01 bookings across lodges; each catch-up transaction locks only its Payment.
+
+## Xero cash credits (#5204)
+
+`XeroCashCredit`, `MemberCreditCashAllocation` and `MemberCreditCashReturn`
+are club-wide. A `XeroCashCredit` is a snapshot of one overpayment or
+prepayment in the club's one Xero organisation: money a contact paid the
+club, not any lodge. A cash allocation names its booking as a bare id, the way
+`MemberCreditNoteAllocation` does, and the booking carries the lodge. A
+return row names a credit restoration and a slice, which identify the same
+booking. None of the three gets a `lodgeId`.
 
 ## Club-Wide Defaults With Per-Lodge Overrides
 
@@ -530,9 +549,11 @@ operational documents (which may carry door/emergency access details).
 - **Stateful booking responses and queue positions keep their lodge owner**
   (#2701/#2887). The admin booking wizard owns each availability response by
   request and lodge, so a late Lodge A response cannot advance or resize a Lodge
-  B booking. Initial waitlist positions are counted under the selected lodge's
-  capacity lock using only older overlapping entries at that lodge, matching
-  every later waitlist position calculation and the member's confirmation email.
+  B booking. A waitlist position belongs to the entry's own lodge: the
+  confirmation email reads it under the selected lodge's capacity lock, and
+  every screen reads it from that lodge's live queue through
+  `getWaitlistPositions` (#5402, `INV-CAP-041`); entries at other lodges count
+  only as `MERGED` opt-ins that named this lodge.
 - **Booking admission and lodge deactivation share one lodge lock** (#2701).
   Draft, confirmed and waitlist creation take the selected lodge's immutable
   capacity key before re-reading active status, member access and requested-room
@@ -634,7 +655,7 @@ new ADR:
   question set at every lodge, and the photo/retention/anonymous-QR policy is a
   club decision (#2780). The reports and their per-lodge QR signs above are
   lodge-scoped; the questions asked and the policy governing them are not.
-- Food-order settings (`FoodOrderSettings` singleton, fork #121): one food
+- Food-order settings (`FoodOrderSettings` singleton, fork triyder/AlpineClubBookingsNZ#121): one food
   officer email and one officer label for the club. The orders above are
   lodge-scoped; who buys the food and what the club calls them is a club
   decision. A per-lodge officer would be a new setting, not a widening of this
@@ -677,7 +698,7 @@ new ADR:
   a lodge on this row: it would be a restriction junction in the shape of
   `PromoCodeLodge` above.
 - Other lodges (`OtherLodge`, and `Amenity`, which hangs off it by
-  `otherLodgeId` with cascade delete, added by #50): the registry of **other
+  `otherLodgeId` with cascade delete, added by triyder/AlpineClubBookingsNZ#50): the registry of **other
   clubs'** lodges — the names the public booking-request form offers under "Are
   you a member of another lodge?", the counterpart a booking officer picks when
   charging a visiting club's members, and the entries the Alpine Central Server
@@ -718,7 +739,7 @@ record the outcome here when decided:
   pre-migration meaning). A lodge-bound event's internal promo resolves
   only for bookings at that lodge; the booking form filters events by the
   chosen lodge and labels lodge-bound ones.
-- **`CalendarEvent.workPartyEventId` (nullable, fork #118) stays club-wide.**
+- **`CalendarEvent.workPartyEventId` (nullable, #5148) stays club-wide.**
   It links a calendar entry to the work party that manages it; the calendar
   itself is club-wide, so the entry carries no lodge of its own and shows the
   work party's lodge name as its location. The work party's `lodgeId` stays
@@ -926,7 +947,6 @@ caller WITH `lodge:view` keeps the whole record. A caller without it receives
 | `doorCode` | **no** | a physical-access secret, already kept out of audit metadata by `redactLodgeForAudit` |
 | `address` | **no** | the lodge's physical location |
 | `travelNote` | **no** | arrival instructions; its only vocabulary consumer is the MEMBER wizard, which reads `/api/lodges` |
-| `postalAddress`, `bankAccountName`, `bankAccountDetails`, `gstNumber` | **no** | invoice details (fork #115), read only on the server by the booking invoice download, `GET /api/bookings/[id]/invoice`, for the booking's own lodge |
 | `createdAt`, `updatedAt` | **no** | record metadata no vocabulary consumer reads |
 | `isDefault`, `displayConfig`, `displayNotice`, `displayNameGranularity`, `showGuestPhonesOnScreens` | **no** | never in either payload; listed so the enumeration is complete |
 

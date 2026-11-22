@@ -14,7 +14,7 @@ import {
 } from "@/lib/food-order-rules";
 
 /**
- * Fork #121 (owner change, 13 Nov 2026): the "Type" list, singular versus
+ * Fork triyder/AlpineClubBookingsNZ#121 (owner change, 13 Nov 2026): the "Type" list, singular versus
  * plural, and the decimal quantity parser — the one module the form, the
  * routes, the history, the checklist, the email and the audit rows all use.
  */
@@ -25,7 +25,7 @@ describe("the Type list", () => {
       "Items",
       "Grams",
       "Kilograms",
-      "Liters",
+      "Litres",
       "Loaves",
       "Packets",
       "Bottles",
@@ -33,7 +33,7 @@ describe("the Type list", () => {
       "Bags",
       "Boxes",
       "Punnets",
-      "Milliliters",
+      "Millilitres",
     ]);
     expect(DEFAULT_FOOD_ORDER_UNIT).toBe("ITEMS");
     expect(isFoodOrderUnit("PACKETS")).toBe(true);
@@ -55,8 +55,8 @@ describe("singular versus plural", () => {
     ["3", "BOXES", "3 Boxes"],
     ["250", "GRAMS", "250 Grams"],
     ["1", "ITEMS", "1 Item"],
-    ["0.25", "MILLILITERS", "0.25 Milliliters"],
-    ["1", "LITERS", "1 Liter"],
+    ["0.25", "MILLILITERS", "0.25 Millilitres"],
+    ["1", "LITERS", "1 Litre"],
   ];
   for (const [quantity, unit, expected] of table) {
     it(`${quantity} ${unit} reads "${expected}"`, () => {

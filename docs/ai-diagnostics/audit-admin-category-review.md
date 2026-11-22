@@ -12,7 +12,7 @@ to look like the absence of a decision.
 way.** #2755 unified the three writers of *an officer editing somebody else's
 member record* on `admin` by moving the two bulk-screen branches IN, rather than
 moving the member-page writer out into a member-visible category. Eight of the
-nine remain held. `admin` therefore reads 101 sites now, not 96, and the rule that
+nine remain held. `admin` therefore read 98 sites after #2755, not 96, and the rule that
 came out of it is `INV-PRIV-012` — which is also where the fifteen lodge-gated
 sites and the `lockers` group (unresolved then, settled by #2777) are now
 recorded, instead of only in the open-question section at the foot of this page.
@@ -579,19 +579,21 @@ land.
 
 ## How to check this page is still true
 
-`pnpm run audit:census` prints the live distribution, and
-`src/lib/__tests__/audit-writer-census.test.ts` fails CI if it moves without the
-manifest moving with it. The numbers this page was written against:
+`pnpm run audit:census` prints the live distribution and every site's category.
+`scripts/audit/audit-write-sites.ts` records each production write site's
+category and sink, one line per site, and
+`src/lib/__tests__/audit-writer-census.test.ts` fails CI when any site is added,
+removed or reclassified without its line changing with it. A pull request that
+adds a writer regenerates that file with `pnpm run audit:census --write`.
 
-```
-row-producing sites:  555
-uncategorised:        0
-category values: admin 117, booking 109, xero 51, family 35, payment 73,
-                 lodge 73, account 19, security 26, privacy 25,
-                 communication 22, system 4
-```
+This page publishes no current count, and no longer records each new writer
+(#5211). A pasted count went stale with every new writer, and each pull request
+that added one edited the same lines here, so any two of them conflicted. The
+paragraphs below are the record up to #5211, kept because each says why its
+writer files where it does; the figures in them are the ones measured at the
+time.
 
-`admin` was 96 when this page was written for #2730 (87 kept + 9 held) and is 98
+`admin` was 96 when this page was written for #2730 (87 kept + 9 held) and was 98
 after #2755 moved the two `bulk-update/route.ts` branches in, against `account`
 20 → 19 and `security` 19 → 18. #2755 moved categories and added no writer;
 #2760 then added the late-capture auto-refund record writer (`payment` 34 → 35),
@@ -777,13 +779,13 @@ the chips (`privacy` 20 -> 21, 498 -> 499). #3372 then added
 refund Stripe gave up on (`payment` 52 -> 53, 499 -> 500), and
 `booking-payment.card-refund.paid-twice-resolved`, the treasurer marking a
 refund paid back twice as sorted out with the member (`payment` 53 -> 54; 499 ->
-500 on the tree composed with #52's removals below and #3750's change-request
+500 on the tree composed with triyder/AlpineClubBookingsNZ#52's removals below and #3750's change-request
 approval, MEASURED). #3819 added one, disjoint from all of these: the
 per-lodge "Who can be hut leader for school bookings" save,
 `LODGE_SETTINGS_UPDATED` beside its lodge-settings sibling (`admin` 109 -> 110,
 RE-MEASURED).
 
-#52 then REMOVED two (`admin` 109 -> 107, 497 -> 495 on the tree composed
+triyder/AlpineClubBookingsNZ#52 then REMOVED two (`admin` 109 -> 107, 497 -> 495 on the tree composed
 with all of the above; MEASURED with
 `npm run audit:census` on that branch rather than subtracted from the literal):
 `OTHER_LODGE_CREATED` and `OTHER_LODGE_DELETED` went with the create and delete
@@ -793,43 +795,33 @@ list. `OTHER_LODGE_UPDATED` stays, still `admin` under INV-PRIV-013's rule, so
 the lodge-gated keep shrinks from nineteen pinned sites to seventeen without
 anyone's readership changing.
 
-#62 then added one (`admin` 107 -> 108, 497 -> 498, MEASURED with
+triyder/AlpineClubBookingsNZ#62 then added one (`admin` 107 -> 108, 497 -> 498, MEASURED with
 `pnpm run audit:census`): `LODGE_CENTRAL_LINK_UPDATED`, the record that an
 administrator linked a local lodge to its lodge on the Alpine Central Server.
 `admin` under INV-PRIV-013's rule, like every writer in the lodge-records
 subsystem, so the lodge-gated keep grows from seventeen pinned sites to
 eighteen; the row names two central lodge ids and the administrator, no member.
 
-#58 then added one more (`admin` 108 -> 109, 498 -> 499, MEASURED with
+triyder/AlpineClubBookingsNZ#58 then added one more (`admin` 108 -> 109, 498 -> 499, MEASURED with
 `pnpm run audit:census`): `OTHER_LODGE_HIDDEN`, the record that an
 administrator hid an Other lodges row the Alpine Central Server does not list.
 `admin` under INV-PRIV-013's rule, beside the registry's update, so the
 lodge-gated keep grows from eighteen pinned sites to nineteen; the row names
 the lodge by id and name only, no member.
 
-#58 also added the download's own record of the lodges it hid because the
+triyder/AlpineClubBookingsNZ#58 also added the download's own record of the lodges it hid because the
 central server deleted them (`alpine_server.other_lodges.hidden`, `lodge`
 66 -> 67, 499 -> 500, MEASURED): lodge names and a count of unlinked club
 lodges, no member. A library writer, so it joins no keep.
 
-#77 added the record that this club's own Other lodge was refilled from its
+triyder/AlpineClubBookingsNZ#77 added the record that this club's own Other lodge was refilled from its
 Fees page (`OTHER_LODGE_RATES_FROM_FEES`, `lodge` 67 -> 68, 500 -> 501,
 MEASURED): the lodge, the trigger and the fields that changed, no member. A
 library writer, so it joins no keep.
-
-Fork #121 added the four food-order writers (`lodge` 68 -> 72, 538 -> 542,
-MEASURED with the census): an order placed, an order marked received, a price
-recorded or changed (old and new cents), and the Food Orders settings saved.
-Food orders are Lodge Operations, so `lodge` under the domain rule; none joins a
-keep, and `lodge` is not readable with `support:view` alone. The owner's
-change to receive orders item by item (13 Nov 2026) added one more,
-`food_order.items_received` (`lodge` 72 -> 73, 542 -> 543, MEASURED). Fork #118 added
-`workparty.calendar.add`, "Add to calendar" on a work party (`admin` 112 -> 113,
-543 -> 544, MEASURED), pinned with its three work-party siblings in the #2765 keep.
 `main` then added #3750's executed approval of a change request on a finished
 stay (`booking` 107 -> 108, `booking-change-request.approve` with
 `executed: true`). The sync of `main` into epic #3789 composed #3819's addition
-with #52's two removals and #3750's addition, all disjoint: `admin` 108,
+with triyder/AlpineClubBookingsNZ#52's two removals and #3750's addition, all disjoint: `admin` 108,
 `booking` 108, 499 row-producing sites, and the lodge-gated keep eighteen
 (RE-MEASURED with `pnpm run audit:census` on the composed tree, never added
 together). The later sync of `main` 0ff7e6d46 into the epic (#3821) composed

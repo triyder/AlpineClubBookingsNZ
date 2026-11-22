@@ -4,14 +4,7 @@ import { paidByOrganiserInternetBanking } from "@/lib/group-organiser-paid";
 import { isUnpaidConfirmedWholeLodge } from "@/lib/booking-payment-flow";
 import { postStoredBookingConfirmationLedgerLines } from "@/lib/booking-ledger-confirmation-sync";
 import { resolveBookingMoneyPostingContext, type BookingJournalContext } from "@/lib/member-money/doors";
-import {
-  type Booking,
-  type BookingGuest,
-  type Payment,
-  PaymentSource,
-  type PaymentStatus,
-  type Role,
-} from "@prisma/client";
+import type { Role } from "@prisma/client";
 
 import { bookingPromoCodeLabel } from "@/lib/booking-promo-redemptions";
 import { bookingOwner } from "@/lib/booking-owner";
@@ -37,7 +30,6 @@ import {
   resolveTargetDates,
   type BatchModifyInput,
   type BookingModificationSettlementMethod,
-  type ResolvedGuestNameUpdate,
   isBookingFullyPaidForGuestNameEdits,
   isMemberWholeLodgeBooking,
   isQuotePricedBooking,
@@ -69,7 +61,6 @@ import {
   type ModificationAdditionalAskMint,
   drainSupersededPrimaryIntents,
   executeBookingModificationRefund,
-  type BookingModificationPaymentContext,
 } from "@/lib/booking-modification-settlement";
 import {
   sendAdminMinorsOnlyReviewAlert,
@@ -113,10 +104,7 @@ import {
 } from "@/lib/edit-refund-hand-back";
 import { reserveModificationRefundDebts } from "@/lib/booking-modification-settlement";
 import { prisma } from "@/lib/prisma";
-import {
-  withOptionalTransaction,
-  type PrismaTransactionClient,
-} from "@/lib/db-transaction";
+import { LOCK1_HOLDER_TRANSACTION_BUDGET, type PrismaTransactionClient, withOptionalTransaction } from "@/lib/db-transaction";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import {
   assertProposedCheckInClearsXeroLockDate,
@@ -130,7 +118,6 @@ import { reconcileBedAllocationsForBookingWithLodgeLockHeld } from "@/lib/bed-al
 import {
   loadMemberGuestAddPolicy,
   matchMemberGuestNotificationRows,
-  type MemberGuestAddNotificationRow,
 } from "@/lib/member-guest-add-policy";
 import type { MemberGuestAddActor } from "@/lib/member-guest-consent";
 import { resolveSubscriptionLockoutMode } from "@/lib/member-subscription-eligibility";
@@ -145,7 +132,7 @@ import {
 } from "@/lib/roster-lock";
 import { formatDateOnly } from "@/lib/date-only";
 import { loadCancellationPolicy } from "@/lib/cancellation";
-import { calculateFullReductionSettlementOptions, refundableCashForModification } from "@/lib/booking-modify-settlement-options";
+import { calculateFullReductionSettlementOptions, fullReductionLockedReads, refundableCashForModification } from "@/lib/booking-modify-settlement-options";
 import { buildIdentityOnlyPricing } from "@/lib/booking-identity-only-pricing";
 import { assertOfficerWorkPartyCorrectionCall, workPartyCorrectionCodeDay, workPartyCorrectionRecord, workPartyCorrectionSkipsBedCheck, type OfficerWorkPartyCorrection } from "@/lib/booking-batch-work-party-correction";
 import { bookingFinalPriceCents } from "@/lib/booking-final-price";
@@ -179,11 +166,7 @@ import {
   type FinishedStayChangeFeeRule,
   type FinishedStayCorrection,
 } from "@/lib/booking-finished-stay-correction";
-
-type ModifiedBooking = Booking & {
-  guests: BookingGuest[];
-  payment: Payment | null;
-};
+import { batchModificationSettlementFacts, unpaidAskResultFacts, type BatchModificationSettlementFacts, type BatchModificationTransactionResult, type ModifiedBooking } from "@/lib/booking-batch-modification-transaction-result";
 
 /**
  * WHY a change fee on this booking was waived, as it is stored (#3232 D2).
@@ -201,118 +184,7 @@ type ModifiedBooking = Booking & {
 export const LINKED_MOVE_CHANGE_FEE_WAIVED_REASON =
   "LINKED_MOVE_SUPERVISION_RULE" as const;
 
-type BatchModificationTransactionResult =
-  BookingModificationPaymentContext & {
-    /** #3954: the reduction cancelled the unpaid ask outright, for the member's email. */
-    unpaidAskCancelled: boolean;
-    /**
-     * The plain figure the emails, the response body and the Xero leg read.
-     * Inherited from `BookingModificationPaymentContext` until #3371 replaced
-     * that field with `additionalAsk`; it is restated here because those
-     * consumers want a number and the minter must not be handed one.
-     */
-    additionalAmountCents: number;
-    billedToOrganiserCents: number; // #4299: invoiced to the group organiser, not asked of this member
-    booking: ModifiedBooking;
-    /** #3232: the deferred hosting reconciliation, when the caller asked for it. */
-    pendingHostingReconcile?: () => Promise<void>;
-    priceDiffCents: number;
-    changeFeeCents: number;
-    /**
-     * #3232 D2: this booking's change fee was WAIVED, not absent.
-     *
-     * Without it a waived fee is an unmarked zero, and "no fee was due" and "we
-     * waived it because our own supervision rule compelled this move" are the
-     * same 0 in the modification row, the audit trail and the Xero leg. A
-     * treasurer reconciling change-fee income against the club setting has
-     * nothing to reconcile against, and the dependent's history reads as an
-     * ordinary member-initiated edit to a booking the member never asked to
-     * move.
-     */
-    changeFeeWaived: boolean;
-    /**
-     * #3232 (fix round): this edit's settlement genuinely needs a card-or-credit
-     * choice, whichever way it was priced.
-     *
-     * `calculateModificationSettlementOptions` answers this as
-     * `cardRefundAmountCents > 0 || creditRefundAmountCents > 0` — an OR over BOTH
-     * options — and the two are computed from separate policy tiers, so one can
-     * resolve to zero while the other does not. A caller that inferred the need
-     * from the RESOLVED amounts of a quote priced one way therefore disagreed with
-     * the write's own refusal, and the disagreement deadlocked the member: see
-     * `combineLinkedMoveQuote`.
-     */
-    requiresSettlementMethod: boolean;
-    refundAmountCents: number;
-    accountCreditAmountCents: number;
-    promoRemoved: boolean;
-    promoChanged: boolean;
-    // #2390: set only when a usage cap stopped the promotion reaching somebody
-    // on the repriced booking; null means everyone it applies to is covered.
-    promoCoverage: PromoCoverageNotice | null;
-    // #3179: set only when this edit carried a promo-code change it could not
-    // honour and dropped. Null means nothing the member asked for was left
-    // undone — never "there was no promo code".
-    promoChangeNotApplied: PromoChangeNotAppliedNotice | null;
-    choreWarnings: string[];
-    datesChanged: boolean;
-    adminOverride: boolean;
-    /**
-     * #3750: set only on a finished-stay correction — the change request it
-     * executed and which half of the owner's fee rule priced it — so the audit
-     * row says why a finished booking moved.
-     */
-    finishedStayCorrection:
-      | (FinishedStayCorrection & {
-          changeFeeRule: FinishedStayChangeFeeRule;
-          confirmOverCapacity: boolean;
-        })
-      | null;
-    /** Fork #119: set only on an officer's work-party correction, for the audit. */
-    officerWorkPartyCorrection: OfficerWorkPartyCorrection | null;
-    notifyMember: boolean;
-    capacityOverridden: boolean;
-    oldCheckIn: Date;
-    oldCheckOut: Date;
-    oldGuestCount: number;
-    addedGuests: BookingGuest[]; // #4030: the rows this edit created, named in its change email
-    hasIssuedXeroInvoice: boolean;
-    paymentStatus: PaymentStatus | null;
-    paymentSource: PaymentSource | null;
-    paymentReference: string | null;
-    xeroInvoiceNumber: string | null;
-    zeroDollarAutoPaid: boolean;
-    supersededPrimaryPaymentIntents: { length: number };
-    xeroAdditionalAmountCents: number;
-    xeroRefundAmountCents: number;
-    appliedCreditGivenBackCents: number;
-    refundedExcessCreditCents: number; // F20 (#1887): an unpaid booking's applied credit the lower price freed
-    settlementMethod: BookingModificationSettlementMethod | null;
-    policyRetainedAmountCents: number;
-    guestNameUpdates: ResolvedGuestNameUpdate[];
-    guestIdentityChanged: boolean;
-    identityOnlyModification: boolean;
-    // #2266: this edit changed ONLY the stored credit election (#2265) — no
-    // member email, exactly like an identity-only edit.
-    creditElectionOnlyModification: boolean;
-    // #2266: the election as stored after this edit, and whether it moved.
-    creditElectionCents: number | null;
-    creditElectionChanged: boolean;
-    // #1372: this edit newly dropped a paid (capacity-holding) booking into the
-    // blocked minors-only review state, so the post-tx step alerts admins.
-    minorsOnlyReviewNewlyFlagged: boolean;
-    // MG2 #2307: cross-family member guests added by this edit, to be told after
-    // the commit. Empty on every family-scope modification.
-    memberGuestNotificationRows: MemberGuestAddNotificationRow[];
-    // MG4 #2309: cross-family member guests this edit took OFF the booking, to
-    // be told after the commit. Empty on every family-scope modification.
-    withdrawnMemberGuests: Array<{
-      targetMemberId: string;
-      context: "REQUEST_CANCELLED" | "TAKEN_OFF";
-    }>;
-  };
-
-export type BatchModificationResponse = {
+export type BatchModificationResponse = BatchModificationSettlementFacts & {
   booking: ModifiedBooking;
   /**
    * The `BookingModification` row this edit wrote (#3750), so a caller that
@@ -745,7 +617,7 @@ export async function modifyBookingBatch({
    * second fee told the member it was waived and charged it anyway.
    */
   waiveChangeFee?: boolean;
-  /** Fork #119: a SERVICE argument, like `waiveChangeFee`; see its type. */
+  /** Fork triyder/AlpineClubBookingsNZ#119: a SERVICE argument, like `waiveChangeFee`; see its type. */
   officerWorkPartyCorrection?: OfficerWorkPartyCorrection;
   /**
    * The work that has to happen BEFORE the transaction, done by the caller that
@@ -1081,7 +953,7 @@ export async function modifyBookingBatch({
       input,
       today: clubTodayDateOnly,
       finishedStayCorrection: Boolean(finishedStayCorrection),
-      workPartyCorrection: Boolean(officerWorkPartyCorrection), // Fork #127/#130: a started stay is priced whole
+      workPartyCorrection: Boolean(officerWorkPartyCorrection), // Fork triyder/AlpineClubBookingsNZ#127/triyder/AlpineClubBookingsNZ#130: a started stay is priced whole
     });
     if (finishedStayCorrection) {
       // The flag only ASKS for the mode. A stay that has not finished took its
@@ -1303,7 +1175,7 @@ export async function modifyBookingBatch({
           // borrows ADMIN only for the reviewed minimum-stay override) prices
           // the party under the family boundary it was actually planned under.
           skipAuthorization: guestPlan.guestAuthorizationIsAdmin,
-          skipBookingLifecycleRules: dates.skipBookingLifecycleRules || workPartyCorrectionSkipsBedCheck(officerWorkPartyCorrection, booking.status), // Fork #127/#130: no bed claimed on a booking already holding its beds
+          skipBookingLifecycleRules: dates.skipBookingLifecycleRules || workPartyCorrectionSkipsBedCheck(officerWorkPartyCorrection, booking.status), // Fork triyder/AlpineClubBookingsNZ#127/triyder/AlpineClubBookingsNZ#130: no bed claimed on a booking already holding its beds
           // Multi-lodge: season rates are resolved for the booking's lodge.
           seasonRateData: await loadActiveSeasonRates(tx, bookingLodgeId),
           // Issue #1668: over-capacity warns-and-confirms under admin override.
@@ -1356,9 +1228,9 @@ export async function modifyBookingBatch({
           guestNightRates: pricingResult.guestNightRates,
           // #3750 (F1): a finished stay's codes are judged on its check-in day,
           // as its fee tiers are — on the real today an expired code would be
-          // released and its discount billed back to the member. Fork #127: so are a correction's on a started stay.
+          // released and its discount billed back to the member. Fork triyder/AlpineClubBookingsNZ#127: so are a correction's on a started stay.
           todayAtClub: finishedStayCorrection ? finishedStayNoticeDay(booking) : workPartyCorrectionCodeDay(officerWorkPartyCorrection, finishedStayNoticeDay(booking), todayAtClub),
-          officerWorkPartyCorrection: officerWorkPartyCorrection ?? null, // the code an Add admits, or (#130) a Remove drops
+          officerWorkPartyCorrection: officerWorkPartyCorrection ?? null, // the code an Add admits, or (fork triyder/AlpineClubBookingsNZ#130) a Remove drops
         });
 
     /**
@@ -1454,7 +1326,7 @@ export async function modifyBookingBatch({
       finishedStayChangeFeeRule !== null && finishedStayRemovalIsCharged(finishedStayChangeFeeRule);
     // #4533: and a correction that applies a promo code returns its reduction
     // in full too — the same untiered settlement, with no removal fee.
-    // Fork #119: so does an officer's work-party correction (see the argument).
+    // Fork triyder/AlpineClubBookingsNZ#119: so does an officer's work-party correction (see the argument).
     const finishedStayReductionInFull =
       Boolean(officerWorkPartyCorrection) ||
       (finishedStayChangeFeeRule !== null &&
@@ -1484,7 +1356,7 @@ export async function modifyBookingBatch({
     // #3750 (owner, 7 Oct 2026, "Same-day fee on removed nights"): a finished-
     // stay correction is charged ONLY the same-day retention on what it removes
     // — never the ordinary late-change fee across the whole booking.
-    // Fork #119: an officer's work-party correction charges none either.
+    // Fork triyder/AlpineClubBookingsNZ#119: an officer's work-party correction charges none either.
     const chargeableChangeFeeCents =
       officerWorkPartyCorrection ||
       finishedStayChangeFeeRule === "ADD_ONLY_NO_FEE" || finishedStayChangeFeeRule === "PROMO_ONLY_NO_FEE"
@@ -1539,6 +1411,8 @@ export async function modifyBookingBatch({
             netChargeCents: reduction.netChargeLeftCents,
             refundableCashCents: await refundableCashForModification(tx, booking.payment, reduction),
             todayAtClub: moneyTierDay,
+            // #5061 follow-up (`INV-PAY-154`), #5303: read under this edit's locks.
+            ...(await fullReductionLockedReads(tx, booking)),
           })
         : await calculateModificationSettlementOptions({
       booking,
@@ -1665,8 +1539,8 @@ export async function modifyBookingBatch({
       bookingId,
       newCheckIn: dates.newCheckIn,
       newFinalPriceCents,
-      // A finished-stay correction's fee is owed with the price. An ordinary edit adds none to the amount owed.
-      feeRecordedByThisEditCents: feeAddedToAmountOwed ? changeFeeCents : payments.changeFeeAddedToAmountOwedCents,
+      // Include this edit's recorded fee: the payment snapshot predates settlement.
+      feeRecordedByThisEditCents: feeAddedToAmountOwed ? changeFeeCents : payments.feeRecordedHereCents,
       format,
       guestsForPricing: guestPlan.guestsForPricing,
       skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
@@ -1925,7 +1799,7 @@ export async function modifyBookingBatch({
                 capacityOverridden: capacityOverridden,
               }
             : {}),
-          // Fork #119: an officer's work-party correction, and its money rule.
+          // Fork triyder/AlpineClubBookingsNZ#119: an officer's work-party correction, and its money rule.
           ...(officerWorkPartyCorrection
             ? { officerWorkPartyCorrection: workPartyCorrectionRecord(officerWorkPartyCorrection) }
             : {}),
@@ -1990,6 +1864,7 @@ export async function modifyBookingBatch({
       bookingModificationId: bookingModification.id,
       adjusted: payments,
       editLabel: "booking change", booking, // #3949: booking names the payee (a group organiser who paid by bank transfer)
+      journal: preparation.journal, actorMemberId: actor.id, // #4516 (M4d): the R05 names the edit's actor
     });
     // #3954, #4744: the re-issue, a folded increase's ask, and a billed-offset note are durable from this commit.
     await queueEditAskFollowUps(tx, {
@@ -2123,7 +1998,7 @@ export async function modifyBookingBatch({
       additionalAsk: payments.additionalAsk,
       // #3954: the unpaid asks this reduction retired, for the minter to cancel.
       retiredAdditionalAsks: payments.retiredAdditionalAsks,
-      unpaidAskCancelled: payments.unpaidAskCancelled,
+      ...unpaidAskResultFacts(payments),
       pendingRefundAmountCents: payments.pendingRefundAmountCents,
       promoRemoved: promo.promoRemoved,
       promoChanged: promo.promoChanged,
@@ -2148,6 +2023,7 @@ export async function modifyBookingBatch({
       oldGuestCount: booking.guests.length,
       addedGuests: createdGuests,
       hasSucceededPayment: payments.hasSucceededPayment,
+      refundHeldForDispute: payments.refundHeldForDispute,
       hasIssuedXeroInvoice: payments.hasIssuedXeroInvoice,
       paymentStatus: booking.payment?.status ?? null,
       paymentSource: booking.payment?.source ?? null,
@@ -2239,7 +2115,7 @@ export async function modifyBookingBatch({
               : ("TAKEN_OFF" as const),
         })),
     } satisfies BatchModificationTransactionResult;
-  });
+  }, LOCK1_HOLDER_TRANSACTION_BUDGET);
 
   // #2525: post-commit provider work (superseded-intent drain, Stripe refund,
   // additional PaymentIntent, member/notification emails, Xero settlement,
@@ -2378,7 +2254,7 @@ export async function modifyBookingBatch({
       promoChangeNotApplied: result.promoChangeNotApplied,
       choreWarnings: result.choreWarnings,
       creditElectionCents: result.creditElectionCents,
-      policyRetainedAmountCents: result.policyRetainedAmountCents,
+      ...batchModificationSettlementFacts(result),
       capacityOverridden: result.capacityOverridden,
     };
   };
@@ -2425,7 +2301,7 @@ export async function modifyBookingBatch({
       promoChangeNotApplied: result.promoChangeNotApplied,
       choreWarnings: result.choreWarnings,
       creditElectionCents: result.creditElectionCents,
-      policyRetainedAmountCents: result.policyRetainedAmountCents,
+      ...batchModificationSettlementFacts(result),
       capacityOverridden: result.capacityOverridden,
       deferredPostCommit: async () => {
         await runPostCommit();
@@ -2500,7 +2376,7 @@ async function dispatchBatchPostTransactionSideEffects({
     // opted out — members always notify), so every suppressed edit is auditable.
     // #3750: the change request this executed and its fee rule, so the audit
     // trail answers "why did a finished stay change" on its own.
-    // Fork #119: the work party an officer added the booking to, and its money rule (why no fee, in full).
+    // Fork triyder/AlpineClubBookingsNZ#119: the work party an officer added the booking to, and its money rule (why no fee, in full).
     ...(result.officerWorkPartyCorrection
       ? { officerWorkPartyCorrection: workPartyCorrectionRecord(result.officerWorkPartyCorrection) }
       : {}),
@@ -2565,7 +2441,9 @@ async function dispatchBatchPostTransactionSideEffects({
     datesChanged: result.datesChanged,
     guestIdentityChanged: result.guestIdentityChanged,
     settlementMethod: result.settlementMethod,
-    refundedThroughStripe: result.hasSucceededPayment, paymentId: result.paymentId,
+    // #5061 follow-up (`INV-PAY-154`): a disputed payment's reduction goes back by hand.
+    refundedThroughStripe: result.hasSucceededPayment && !result.refundHeldForDispute, paymentId: result.paymentId,
+    refundHeldForDispute: result.refundHeldForDispute,
     appliedCreditGiveBackCents: result.appliedCreditGivenBackCents,
     // #3653: the organiser child refund raises the one note, after Stripe.
     organiserChildRefundOwnsCreditNote: result.organiserChildRefund !== null,

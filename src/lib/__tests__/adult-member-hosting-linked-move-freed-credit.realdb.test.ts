@@ -1,5 +1,5 @@
 /**
- * Real-PostgreSQL proof for fork #132: the adult-member hosting linked-move
+ * Real-PostgreSQL proof for fork triyder/AlpineClubBookingsNZ#132: the adult-member hosting linked-move
  * offer's "comes back" figure counts the account credit a lower price frees on a
  * booking that is still pending, so the figure the member accepts equals the
  * change in their credit balance.
@@ -10,8 +10,9 @@
  * Moving the host two weeks later would strand the dependent, so the member is
  * offered the linked move. The later nights are cheaper for a non-member, so the
  * dependent's price falls below the credit already applied to it, and the F20
- * (#1887) clamp returns the excess to the owner's balance. Owner decision on
- * #132 (16 Nov 2026): that credit is in the one "comes back" total.
+ * (#1887) clamp returns the excess to the owner's balance. That credit is in
+ * the one "comes back" total, as the maintainers' 18 Nov money review on #5149
+ * checked (https://github.com/thatskiff33/AlpineClubBookingsNZ/pull/5149#issuecomment-6952444211).
  *
  * Every step is the REAL code — `offerLinkedDateMove` and `applyLinkedDateMove`,
  * which run both `modifyBookingBatch` calls in one transaction under the global
@@ -259,7 +260,7 @@ async function bookingRows() {
   });
 }
 
-(RUN ? describe : describe.skip)("the linked move counts freed account credit, on PostgreSQL (fork #132)", () => {
+(RUN ? describe : describe.skip)("the linked move counts freed account credit, on PostgreSQL (fork triyder/AlpineClubBookingsNZ#132)", () => {
   beforeAll(async () => {
     assertSafeRaceDbUrl(RACE_DB_URL, "Linked move freed credit");
     process.env.DATABASE_URL = RACE_DB_URL;

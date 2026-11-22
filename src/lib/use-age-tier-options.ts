@@ -3,7 +3,7 @@
 import type { AgeTier } from "@prisma/client";
 import { useEffect, useState } from "react";
 import type { MembershipTypeAgeExemption } from "@/lib/membership-types";
-import { formatAgeTierName } from "@/lib/age-tier-name";
+import { ageTierLabel, formatAgeTierName } from "@/lib/age-tier-name";
 
 export type AgeTierOption = {
   tier: AgeTier;
@@ -64,17 +64,15 @@ export function useAgeTierOptions(): AgeTierOption[] {
   return options;
 }
 
-// The static tier name lives in a plain module so server code can use it too.
+// The static tier name lives in a plain module so server code (the generated
+// booking invoice, #5066) can use it too; re-exported for this module's callers.
 export { formatAgeTierName };
 
 export function getAgeTierLabel(
   options: AgeTierOption[],
   tier: AgeTier | string
 ): string {
-  return (
-    options.find((option) => option.tier === tier)?.label ??
-    formatAgeTierName(tier)
-  );
+  return ageTierLabel(tier, (key) => options.find((option) => option.tier === key)?.label);
 }
 
 // The four real person tiers, always selectable in a member's age-tier picker.

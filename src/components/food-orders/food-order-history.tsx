@@ -17,21 +17,21 @@ import {
   FOOD_ORDER_STATUSES,
   FOOD_ORDER_STATUS_LABELS,
 } from "@/lib/food-order-rules";
-import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 import { setAdminListPageParam } from "@/lib/admin-list-page";
+import { apiErrorMessageFromResponse } from "@/lib/api-error-message";
 
 import { FoodOrderRow, type FoodOrderHistoryItem } from "./food-order-row";
 import { FoodOrderTotals, type FoodOrderYearTotalView } from "./food-order-totals";
 
 /**
- * The food-order history (fork #121): filters, the order count and price total
+ * The food-order history (fork triyder/AlpineClubBookingsNZ#121): filters, the order count and price total
  * for the filter, a page of orders, and a pager. Whether the viewer sees every
- * order or only their own is the server's answer (`canViewAll`), never decided
+ * other members' orders or only their own is the server's answer (`seesOthersOrders`), never decided
  * here.
  */
 
 type HistoryPayload = {
-  canViewAll: boolean;
+  seesOthersOrders: boolean;
   orders: FoodOrderHistoryItem[];
   page: number;
   pageSize: number;
@@ -59,8 +59,7 @@ function queryFor(filters: Filters, page: number, linkedOrderId: string | null):
   if (filters.status !== ALL) params.set("status", filters.status);
   if (filters.from) params.set("from", filters.from);
   if (filters.to) params.set("to", filters.to);
-  setAdminListPageParam(params, page);
-  return params.toString();
+  return setAdminListPageParam(params, page).toString();
 }
 
 export function FoodOrderHistory({ highlightOrderId }: { highlightOrderId: string | null }) {
@@ -206,7 +205,7 @@ export function FoodOrderHistory({ highlightOrderId }: { highlightOrderId: strin
               </h2>
               <FoodOrderRow
                 order={payload.linkedOrder}
-                showOrderedBy={payload.canViewAll}
+                showOrderedBy={payload.seesOthersOrders}
                 highlighted
                 onChanged={() => void load()}
               />
@@ -221,7 +220,7 @@ export function FoodOrderHistory({ highlightOrderId }: { highlightOrderId: strin
                 <FoodOrderRow
                   key={order.id}
                   order={order}
-                  showOrderedBy={payload.canViewAll}
+                  showOrderedBy={payload.seesOthersOrders}
                   highlighted={false}
                   onChanged={() => void load()}
                 />

@@ -6,8 +6,8 @@ Prefixes defined in this file: **`INV-OPS`** — raw SQL result shapes, raw SQL
 construction and row locking, the client/server bundle boundary, production
 deployment including the worked windowed column drop, changing what values
 already stored in a column mean, what may be used as test input, which money
-seams a test may mock (`INV-OPS-015`), and which CI runs must finish and what a
-release may tag (`INV-OPS-021`) — and
+seams a test may mock (`INV-OPS-015`), and which CI runs a newer merge may
+replace and what a release may tag (`INV-OPS-021`) — and
 **`INV-LOCK`** (#2722), the two-tier advisory-lock protocol: which tier a writer
 takes, the order it takes them in, and the registration every global site
 carries. `INV-LOCK` sits here because advisory locking is the sibling of the row
@@ -282,10 +282,12 @@ rules first written here. #2765 extended it with the measured-audience half.
   `docs/CONCURRENCY_AND_LOCKING.md` -> "The lock(1) transaction budget" states
   it against `DEPLOYMENT.md` -> "Connection pool sizing". A writer with a harder
   ceiling of its own, such as a provider delivery timeout, may run tighter and
-  says why at the site. Booking create, the linked date move, bed-range
-  assignment and group settlement use the constant; other lock(1) writers still
-  on the defaults, or on their own copy of the numbers, are a known gap tracked
-  by #5175, not a licence.
+  says why in an `INV-LOCK-006 exception:` comment inside the options argument.
+  `lock1-transaction-budget-census.test.ts` enforces this: it follows every
+  lock(1) site out through named helpers to the transaction that opens it, and
+  accepts only the constant, a `const` that is exactly it, or a reasoned
+  exception (`docs/audits/lock1-transaction-budgets.md`). No spread: advisory-lock
+  transactions stay on READ COMMITTED (`INV-LOCK-005`).
 
 ## INV-OPS-014
 
@@ -590,20 +592,16 @@ rules first written here. #2765 extended it with the measured-audience half.
   demands a destructive reset on every development database that applied it.
   Editing also breaks the audit trail: the file no longer records what ran.
   Extend the literal list only while unreleased and unapplied anywhere.
-  A GENERAL "did a reclassification ship without a backfill" check is
-  **not available**: the audit-writer census pins only 131 of its 555 write sites
-  per-site — the union of `APPLIED_AUDIT_CATEGORIES`,
-  `REVIEWED_ADMIN_CATEGORIES_2730`, `MEMBER_RECORD_ADMIN_CATEGORIES_2755` and
-  `LODGE_GATED_ADMIN_CATEGORIES_2765`, counted rather than added up, and asserted
-  by `audit-writer-census.test.ts` so this figure and the copy of it in
-  `bed-allocation-audit-category-backfill.test.ts` cannot go stale again —
-  deliberately, because pinning all of them would make every feature that records
-  something edit a 400-line literal — so for the other 383 there is no baseline
-  a check could compare against, and the category distribution alone cannot see a
-  reclassification that another one compensates for. The two `verify` gates that
-  can read a pull request parse its BODY, not its diff. So outside the pinned
-  population this is a rule a reviewer applies, and the reviewer is the
-  enforcement.
+  Since #5211 every write site has a per-site baseline: the generated ledger
+  `scripts/audit/audit-write-sites.ts` records each site's category, sink and
+  action, so any reclassification fails `audit-writer-census.test.ts`, naming
+  every changed attribute. Sites are matched within their function by sink and
+  action; sites sharing both are matched by order, and a reviewed record keyed
+  by `#n` must be re-pointed when its key shifts. A GENERAL "did it ship WITH a
+  backfill" check is still **not available**: the ledger sees the move, not the
+  migration or issue answering for it, and the two `verify` gates that can read
+  a pull request parse its BODY, not its diff. So outside #2751's population
+  this is a rule a reviewer applies, and the reviewer is the enforcement.
 
   **The same pull request also states the MEASURED before/after audience, per
   site.** Owner decision of 11 August 2026 on #2765, D3, extending this rule
@@ -662,6 +660,13 @@ about at all. Removing the field outright now does the same thing permanently:
 **no call shape on this delegate can emit SQL naming the column**, because the
 generated client has no such field to put in a `SELECT`, an `INSERT` column
 list, a `RETURNING` or a `WHERE`.
+
+The rule for every retired column follows. An explicit `select` narrows a read
+and a write's `RETURNING`, never an `INSERT`'s column list, so it does not make
+a drop safe. A contract `DROP COLUMN` is old-code compatible only once a release
+that marks the field `@ignore` is the draining colour (#5396 applies this to
+`ClubModuleSettings.multiLodge`, `NotificationPreference.bookingWaitlist` and
+`BookingRequestSettings.assignSchoolTeachersAsHutLeaders`).
 
 ## INV-OPS-006
 
@@ -875,30 +880,35 @@ installation.
 
 ## INV-OPS-021
 
-Every push run of `ci.yml`, `e2e.yml` and `money-coverage.yml` runs to
-completion. A newer push never cancels it or replaces it while pending. Each
-push run's concurrency group is keyed on its branch and commit, because GitHub
-replaces an older pending run in a shared group even with
-`cancel-in-progress: false`.
-Pull-request runs keep one group per ref and cancel superseded runs. This holds
-for `epic/**` pushes too, which use the same `github.event.before` gates.
+A newer push to `main` may replace its queued run of `ci.yml`, `e2e.yml`,
+`money-coverage.yml` and `docs-link-check.yml`, never one that has started.
+Pushes to `main` share one concurrency group per workflow with
+`cancel-in-progress: false`: GitHub keeps one running and one pending run and
+drops the older pending one, so the newest `main` commit gets its full set
+unless a manual re-run of an older commit replaces its pending run. Pushes to
+`epic/**` keep a group per commit. Pull-request runs keep one group per ref and
+cancel superseded runs.
+
+The push-only gates (doc index, file-size ratchet, migration-safety ledger)
+judge a push to `main` from the last judged `main` commit: the head of the
+newest earlier finished `ci.yml` push run on `main`, for an ancestor of HEAD,
+whose gate steps ran, so a merge whose run was dropped is judged with the next.
+It fails closed when no such run exists or GitHub cannot say.
 
 A release tags only a commit whose `ci.yml` push run on `main` had a
 successful `Publish GHCR images` job. `release:cut publish` asks GitHub for
-that job's result, not git history, on the commit it would tag (on a resume,
-the tagged commit). It refuses before any tag or release when the job did not
-succeed, when no run exists, or when GitHub's answer cannot be read — so its
-token needs Actions read access.
+that job's result on the commit it would tag (on a resume, the tagged commit)
+and refuses before any tag or release unless GitHub says that job succeeded.
+A dropped intermediate commit has no images; the default, `origin/main`,
+normally has a successful run; `release:cut publish` refuses otherwise.
 
-- Why: one shared group cancelled about half of `main`'s runs on a busy day
-  (#4989). A cancelled run publishes no images, so a release tag on it could not
-  be deployed. The push-only gates (file-size ratchet, migration-safety ledger,
-  doc index) never judged its change. And a red `main` could not be traced to
-  the merge that caused it. Being on `main`'s first-parent chain proved none of
-  this.
-- Enforced by `scripts/ci/main-push-runs-complete.test.ts`, which evaluates
-  each workflow's group for a push and a pull request, and by the
-  `requirePublishedImages` cases in `scripts/release/cut-release.test.mjs`.
+- Why: queuing a full CI run (about 48 minutes) per merge held every open
+  pull request behind `main` (#5356, owner decision 22 Nov 2026, replacing
+  #4989's every-push-run-completes rule). A dropped run publishes no images
+  and judges nothing, hence the last-judged base and the release check.
+- Enforced by `scripts/ci/main-push-superseded-runs.test.ts`,
+  `scripts/ci/resolve-main-push-base.test.ts` and the `requirePublishedImages`
+  cases in `scripts/release/cut-release.test.mjs`.
 
 ## INV-OPS-022
 
